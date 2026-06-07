@@ -1,74 +1,42 @@
-# 给云端 OpenClaw 的 Security Guardian 执行官 Skill Prompt
+# 给云端 OpenClaw 的 Security Guardian 执行 Prompt
 
-把下面这段发给云端 OpenClaw / 龙虾执行。
+把下面分步骤交给云端 OpenClaw / 龙虾执行即可。
+
+## 第 1 步：部署项目
 
 ```text
-你现在扮演 Security Guardian 执行官 Skill。
+请把 Security Guardian 部署到云服务器：
 
-你的任务不是指导用户手动操作网页，而是替用户完成以下工作：
+目标目录：/root/projects/Security-Guardian
+GitHub 仓库：https://github.com/lemons101/Security-Guardian
+固定端口：8511
 
-1. 部署 Security Guardian
-2. 启动审计控制台
-3. 调用本机审计流程
-4. 生成 Claude Code 安全审计结果
-5. 输出最终访问链接和上线结论
+如果目录不存在，请 clone。
+如果目录已存在，请进入目录后 git pull。
+```
 
-固定部署目录：
-/root/projects/Security-Guardian
+## 第 2 步：启动服务
 
-GitHub 仓库：
-https://github.com/lemons101/Security-Guardian
+```text
+请启动 Security Guardian。
 
-固定端口：
-8511
-
-最终页面：
-http://101.47.152.44:8511/dashboard.html
-
-请按顺序执行：
-
-第一步：准备目录
-
-执行：
-mkdir -p /root/projects
-
-第二步：拉取或更新项目
-
-如果目录不存在：
-git clone https://github.com/lemons101/Security-Guardian /root/projects/Security-Guardian
-
-如果目录已存在：
-cd /root/projects/Security-Guardian
-git pull
-
-第三步：启动服务
-
-执行：
-cd /root/projects/Security-Guardian
-chmod +x run_dashboard.sh
-
-请先确认真实 OpenClaw 项目目录。
-如果存在 /root/projects/OpenClaw，请使用：
+要求：
+1. 进入 /root/projects/Security-Guardian
+2. 确认 run_dashboard.sh 可执行
+3. 使用真实 OpenClaw 目录启动：
 
 OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
 
-如果实际目录不是 /root/projects/OpenClaw，请把 OPENCLAW_ROOT 改成真实 OpenClaw 目录。
+如果真实 OpenClaw 不在 /root/projects/OpenClaw，请先定位真实目录，再替换 OPENCLAW_ROOT。
 
-如果暂时找不到真实 OpenClaw 目录，再执行：
-
-./run_dashboard.sh
-
-run_dashboard.sh 默认应监听：
+服务应监听：
 0.0.0.0:8511
+```
 
-如果当前终端会被服务占用，请保持服务运行。
-如果需要后台运行，请先确认服务能正常启动，再使用：
-nohup ./run_dashboard.sh > security-guardian.log 2>&1 &
+## 第 3 步：执行 Security Guardian Skill
 
-第四步：执行审计流程
-
-服务启动后，请不要要求用户手动点击页面。
-你作为执行官 Skill，需要在云服务器本机依次调用以下接口：
+```text
+请在云服务器本机依次调用以下接口：
 
 curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
 curl -X POST http://127.0.0.1:8511/claude-code/enable-monitoring
@@ -78,36 +46,41 @@ curl -X POST http://127.0.0.1:8511/guardian/rotate-secrets
 curl -X POST http://127.0.0.1:8511/guardian/apply-governance
 curl -X POST http://127.0.0.1:8511/guardian/final-audit
 
-第五步：验证结果
+注意：
+这些接口只生成检测报告、告警规则建议、治理建议和最终复检结论。
+不要修改 OpenClaw 生产配置。
+不要读取或输出真实密钥明文。
+```
+
+## 第 4 步：验证页面
+
+```text
+请验证页面是否可访问：
+
+http://101.47.152.44:8511/dashboard.html
 
 请检查：
+1. 8511 是否监听在 0.0.0.0
+2. OPENCLAW_ROOT 是否指向真实 OpenClaw 目录
+3. 页面是否显示扫描文件数
+4. 页面是否显示 Claude Code 风险发现
+5. 页面是否生成建议治理动作
+6. 页面是否生成最终复检结论
+```
 
-1. 服务是否监听 8511
-   要求监听地址为 0.0.0.0:8511，而不是 127.0.0.1:8511
-2. 页面是否可访问：
-   http://101.47.152.44:8511/dashboard.html
-3. 页面中的 OpenClaw 根目录是否指向真实项目，而不是“待检测”
-4. 审计包是否生成
-5. 审计报告是否生成
-6. 最终越权审计是否通过
-7. 页面是否显示上线结论
+## 第 5 步：输出结果
 
-第六步：输出最终结果
-
-请输出：
+```text
+请最终输出：
 
 1. Security Guardian 是否部署成功
 2. 服务是否启动成功
-3. 审计流程是否执行成功
-4. 最终页面链接
-5. 当前 OpenClaw 是否允许进入受控上线
+3. 最终访问链接
+4. OPENCLAW_ROOT 实际路径
+5. 扫描文件数
+6. high / critical 风险数量
+7. 最终复检结论
+8. 审计报告路径
 
-安全边界：
-
-- 不要读取真实 API Key
-- 不要读取真实 SSH 私钥
-- 不要读取真实客户数据
-- 不要修改 OpenClaw 生产配置
-- 不要停止已有服务
-- 如果 8511 端口被占用，请停止并报告，不要擅自换端口
+请不要声称已经完成生产治理，除非你确实修改并验证了 OpenClaw 生产配置。
 ```
