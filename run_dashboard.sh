@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-export ATLAS_HOST="${ATLAS_HOST:-127.0.0.1}"
+export ATLAS_HOST="${ATLAS_HOST:-0.0.0.0}"
 export ATLAS_PORT="${ATLAS_PORT:-8511}"
 
 if command -v python3 >/dev/null 2>&1; then

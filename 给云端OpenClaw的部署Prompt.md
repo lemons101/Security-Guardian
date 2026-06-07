@@ -48,6 +48,9 @@ cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
 ./run_dashboard.sh
 
+run_dashboard.sh 默认应监听：
+0.0.0.0:8511
+
 如果当前终端会被服务占用，请保持服务运行。
 如果需要后台运行，请先确认服务能正常启动，再使用：
 nohup ./run_dashboard.sh > security-guardian.log 2>&1 &
@@ -70,6 +73,7 @@ curl -X POST http://127.0.0.1:8511/guardian/final-audit
 请检查：
 
 1. 服务是否监听 8511
+   要求监听地址为 0.0.0.0:8511，而不是 127.0.0.1:8511
 2. 页面是否可访问：
    http://101.47.152.44:8511/dashboard.html
 3. 审计包是否生成

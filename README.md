@@ -45,6 +45,18 @@ chmod +x run_dashboard.sh
 ./run_dashboard.sh
 ```
 
+云服务器脚本默认监听：
+
+```text
+0.0.0.0:8511
+```
+
+这意味着只要云安全组 / 防火墙放行 TCP `8511`，公网即可访问：
+
+```text
+http://101.47.152.44:8511/dashboard.html
+```
+
 Windows 本地：
 
 ```powershell
