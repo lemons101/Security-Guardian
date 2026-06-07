@@ -827,6 +827,7 @@ def page_html():
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
+      overflow-x: hidden;
     }
     header {
       min-height: 72px;
@@ -863,6 +864,7 @@ def page_html():
       gap: 16px;
       padding: 16px;
       max-width: 1480px;
+      width: 100%;
       margin: 0 auto;
     }
     section {
@@ -870,6 +872,7 @@ def page_html():
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 16px;
+      min-width: 0;
     }
     h2 {
       font-size: 15px;
@@ -992,6 +995,8 @@ def page_html():
       max-height: 360px;
       font-size: 12px;
       line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .stack { display: grid; gap: 16px; }
     .command {
@@ -1027,7 +1032,7 @@ def page_html():
 <body>
   <header>
     <div>
-      <h1>Claude Code: OpenClaw Security Monitor</h1>
+      <h1>OpenClaw 安全自审计控制台</h1>
       <div class="sub">模拟云服务器上的 OpenClaw 主动调用 Claude Code，对自己的日志、配置和运行行为进行安全自审计</div>
       <div class="topline">
         <span class="pill">Cloud OpenClaw = 自审计发起方</span>
@@ -1035,14 +1040,14 @@ def page_html():
         <span class="pill">Security Guardian = 治理执行器</span>
       </div>
     </div>
-    <button onclick="resetLab()">Reset Lab</button>
+    <button onclick="resetLab()">重置演示</button>
   </header>
   <main>
     <div class="stack">
       <section>
         <h2>实验角色</h2>
         <div class="roles">
-          <div class="role"><b>Cloud OpenClaw / Atlas</b><span>部署在云服务器上的数字员工运行时。初始日志里已经出现控制面、Skill、Token 和出站异常。</span></div>
+          <div class="role"><b>云端 OpenClaw / Atlas</b><span>部署在云服务器上的数字员工运行时。初始日志里已经出现控制面、Skill、Token 和出站异常。</span></div>
           <div class="role"><b>Claude Code</b><span>读取 OpenClaw 日志与配置快照，输出风险编号、位置、证据、影响和修复建议。</span></div>
           <div class="role"><b>Security Guardian</b><span>自动治理执行器。根据 Claude 审计结论执行封堵、隔离、轮换和熔断。</span></div>
           <div class="role"><b>审计报告</b><span>最终交付物。用于判断 OpenClaw 是否允许进入受控无人值守运行。</span></div>
@@ -1186,15 +1191,22 @@ OpenClaw Skill 行为日志</div>
       const res = await fetch('/api/status');
       const s = await res.json();
       const skill = s.skills['reconcile-plus'].sandbox;
+      const callMethod = s.cloud.auditMethod === 'steer one-shot' ? 'steer 一次性调用' : s.cloud.auditMethod;
+      const runtime = s.cloud.runtime === 'OpenClaw + Claude Code' ? 'OpenClaw + Claude Code' : s.cloud.runtime;
+      const logWindow = s.cloud.logWindow === 'last 24h' ? '最近 24 小时' : s.cloud.logWindow;
+      const skillSources = s.cloud.configSnapshot.skillSources
+        .map(x => x === 'official' ? '官方' : x === 'community-market' ? '社区市场' : x)
+        .join(', ');
+      const secretStorage = s.cloud.configSnapshot.secretStorage === 'plain env file' ? '明文环境文件' : s.cloud.configSnapshot.secretStorage;
       document.getElementById('cloudStatusGrid').innerHTML = [
         item('云服务器', s.cloud.server, '', 'safeBox'),
-        item('运行时', s.cloud.runtime, '', 'safeBox'),
-        item('调用方式', s.cloud.auditMethod, 'controlled', 'safeBox'),
-        item('日志窗口', s.cloud.logWindow, '', 'safeBox'),
+        item('运行时', runtime, '', 'safeBox'),
+        item('调用方式', callMethod, 'controlled', 'safeBox'),
+        item('日志窗口', logWindow, '', 'safeBox'),
         item('开放端口', s.cloud.configSnapshot.openPorts.join(', '), 'high', 'highBox'),
         item('WebSocket 绑定', s.cloud.configSnapshot.websocketBind, 'critical', 'criticalBox'),
-        item('Skill 来源', s.cloud.configSnapshot.skillSources.join(', '), 'high', 'highBox'),
-        item('密钥存储', s.cloud.configSnapshot.secretStorage, 'critical', 'criticalBox'),
+        item('Skill 来源', skillSources, 'high', 'highBox'),
+        item('密钥存储', secretStorage, 'critical', 'criticalBox'),
         item('Claude 监控', s.cloud.monitoringEnabled ? 'ON' : 'OFF', s.cloud.monitoringEnabled ? 'controlled' : 'high', s.cloud.monitoringEnabled ? 'safeBox' : 'highBox')
       ].join('');
       document.getElementById('statusGrid').innerHTML = [
