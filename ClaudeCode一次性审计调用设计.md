@@ -193,5 +193,5 @@ Claude Code 的职责是：
 OpenClaw 的职责是：
 
 ```text
-收集证据 → 调用 Claude Code → 展示报告 → 执行治理动作
+收集证据 → 调用 Claude Code → 展示报告 → 生成建议治理动作
 ```

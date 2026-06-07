@@ -2,7 +2,7 @@
 
 这是第 20 章《企业级数字员工的安全审计与生产治理》的实战项目。
 
-项目模拟一台已经部署在云服务器上的 OpenClaw。OpenClaw 会收集自己的运行日志、配置快照、Skill 权限、Token 用量和治理状态，然后通过 **steer one-shot** 调用 Claude Code 进行安全自审计。Claude Code 输出风险报告，Security Guardian 根据报告执行治理动作，最终生成上线前安全审计结论。
+项目模拟一台已经部署在云服务器上的 OpenClaw。OpenClaw 会收集自己的运行日志、配置快照、Skill 权限、Token 用量和治理状态，然后通过 **steer one-shot** 调用 Claude Code 进行安全自审计。Claude Code 输出风险报告，Security Guardian 根据报告生成建议治理动作，最终生成上线前安全审计结论。
 
 ## 一、项目目标
 
@@ -28,7 +28,7 @@ Claude Code 审查审计包
   ↓ 输出
 security_audit_report.md / security_audit_report.json
   ↓
-Security Guardian 展示报告并执行治理动作
+Security Guardian 展示报告并生成建议治理动作
   ↓
 最终越权审计与上线结论
 ```
@@ -194,7 +194,7 @@ http://服务器IP:8511/dashboard.html
 
 - Claude Code 云端日志审计报告
 - Claude Code 监控告警
-- OpenClaw 治理动作记录
+- OpenClaw 建议治理动作记录
 - 最终越权审计结果
 - `OpenClaw生产上线安全核查表.md`
 
@@ -215,4 +215,4 @@ http://服务器IP:8511/dashboard.html
 
 本项目演示的是：
 
-> OpenClaw 在云服务器上调用 Claude Code 对自己做安全自审计，Claude Code 输出风险报告，Security Guardian 执行治理，最终判断数字员工是否可以进入受控无人值守运行。
+> OpenClaw 在云服务器上调用 Claude Code 对自己做安全自审计，Claude Code 输出风险报告，Security Guardian 生成建议治理动作，最终判断数字员工是否可以进入受控无人值守运行。

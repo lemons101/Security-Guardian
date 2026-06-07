@@ -1100,7 +1100,7 @@ def page_html():
       <div class="topline">
         <span class="pill">Cloud OpenClaw = 自审计发起方</span>
         <span class="pill">Claude Code = 日志审计与报告生成</span>
-        <span class="pill">Security Guardian = 治理执行器</span>
+        <span class="pill">Security Guardian = 建议治理动作</span>
       </div>
     </div>
     <button onclick="resetLab()">重置演示</button>
@@ -1112,7 +1112,7 @@ def page_html():
         <div class="roles">
           <div class="role"><b>云端 OpenClaw</b><span>部署在云服务器上的数字员工运行时。初始日志里已经出现控制面、Skill、Token 和出站异常。</span></div>
           <div class="role"><b>Claude Code</b><span>读取 OpenClaw 日志与配置快照，输出风险编号、位置、证据、影响和修复建议。</span></div>
-          <div class="role"><b>Security Guardian</b><span>自动治理执行器。根据 Claude 审计结论执行封堵、隔离、轮换和熔断。</span></div>
+          <div class="role"><b>Security Guardian</b><span>建议治理动作生成器。根据 Claude 审计结论给出封堵、隔离、轮换和熔断建议。</span></div>
           <div class="role"><b>审计报告</b><span>最终交付物。用于判断 OpenClaw 是否允许进入受控无人值守运行。</span></div>
         </div>
       </section>
@@ -1162,7 +1162,7 @@ OpenClaw Skill 行为日志</div>
         <div class="cards" id="findingCards">Loading...</div>
       </section>
       <section>
-        <h2>Security Guardian 治理记录</h2>
+        <h2>Security Guardian 建议治理动作</h2>
         <div class="timeline" id="reportTimeline">Loading...</div>
       </section>
       <section>
@@ -1293,7 +1293,7 @@ OpenClaw Skill 行为日志</div>
     }
     function renderReportTimeline(s) {
       if (!s.guardianReports.length) {
-        document.getElementById('reportTimeline').innerHTML = '<div class="row">尚无治理记录。</div>';
+        document.getElementById('reportTimeline').innerHTML = '<div class="row">尚无建议治理动作。</div>';
         return;
       }
       document.getElementById('reportTimeline').innerHTML = s.guardianReports.map(r => `
