@@ -1014,6 +1014,69 @@ def page_html():
       max-height: 340px;
       overflow: auto;
     }
+    .cards {
+      display: grid;
+      gap: 10px;
+      max-height: 440px;
+      overflow: auto;
+    }
+    .finding {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      display: grid;
+      gap: 8px;
+      font-size: 13px;
+    }
+    .findingHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .findingTitle {
+      font-weight: 800;
+      font-size: 14px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .badge.critical { color: var(--red); background: var(--red-bg); border-color: #fecdca; }
+    .badge.high { color: var(--amber); background: var(--amber-bg); border-color: #fedf89; }
+    .badge.medium { color: var(--blue); background: var(--blue-bg); border-color: #84caff; }
+    .kv {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 8px;
+      line-height: 1.45;
+    }
+    .kv b { color: var(--muted); font-weight: 700; }
+    .timeline {
+      display: grid;
+      gap: 10px;
+      max-height: 360px;
+      overflow: auto;
+    }
+    .timelineItem {
+      border-left: 3px solid #84caff;
+      background: var(--soft);
+      border-radius: 7px;
+      padding: 10px 10px 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .timelineTitle {
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
     .row {
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -1095,12 +1158,20 @@ OpenClaw Skill 行为日志</div>
     </div>
     <div class="stack">
       <section>
-        <h2>Claude / Guardian 报告</h2>
-        <pre id="reports">Loading...</pre>
+        <h2>Claude Code 风险发现</h2>
+        <div class="cards" id="findingCards">Loading...</div>
       </section>
       <section>
-        <h2>云端日志与监控告警</h2>
-        <pre id="cloudLogs">Loading...</pre>
+        <h2>Security Guardian 治理记录</h2>
+        <div class="timeline" id="reportTimeline">Loading...</div>
+      </section>
+      <section>
+        <h2>云端日志</h2>
+        <div class="log" id="cloudLogList">Loading...</div>
+      </section>
+      <section>
+        <h2>监控告警</h2>
+        <div class="cards" id="monitorAlerts">Loading...</div>
       </section>
       <section>
         <h2>最终上线审计</h2>
@@ -1187,6 +1258,73 @@ OpenClaw Skill 行为日志</div>
       });
       document.getElementById('nextAction').textContent = nextPhase(p)[1];
     }
+    function severityLabel(value) {
+      const v = String(value || '').toLowerCase();
+      if (v === 'critical') return '严重';
+      if (v === 'high') return '高危';
+      if (v === 'medium') return '中危';
+      if (v === 'low') return '低危';
+      return value || '未知';
+    }
+    function severityClass(value) {
+      const v = String(value || '').toLowerCase();
+      if (v === 'critical') return 'critical';
+      if (v === 'high') return 'high';
+      if (v === 'medium') return 'medium';
+      return 'medium';
+    }
+    function renderFindings(s) {
+      const report = s.cloud.claudeReport;
+      if (!report || !report.findings || !report.findings.length) {
+        document.getElementById('findingCards').innerHTML = '<div class="row">尚未生成 Claude Code 风险报告。请先执行“分析云端日志”。</div>';
+        return;
+      }
+      document.getElementById('findingCards').innerHTML = report.findings.map(f => `
+        <div class="finding">
+          <div class="findingHeader">
+            <div class="findingTitle">${escapeHtml(f.id)} · ${escapeHtml(f.location)}</div>
+            <span class="badge ${severityClass(f.severity)}">${severityLabel(f.severity)}</span>
+          </div>
+          <div class="kv"><b>证据</b><span>${escapeHtml(f.evidence)}</span></div>
+          <div class="kv"><b>影响</b><span>${escapeHtml(f.risk)}</span></div>
+          <div class="kv"><b>建议</b><span>${escapeHtml(f.recommendation)}</span></div>
+        </div>
+      `).join('');
+    }
+    function renderReportTimeline(s) {
+      if (!s.guardianReports.length) {
+        document.getElementById('reportTimeline').innerHTML = '<div class="row">尚无治理记录。</div>';
+        return;
+      }
+      document.getElementById('reportTimeline').innerHTML = s.guardianReports.map(r => `
+        <div class="timelineItem">
+          <div class="timelineTitle">[${escapeHtml(r.time)}] ${escapeHtml(r.title)}</div>
+          ${r.lines.slice(0, 8).map(x => `<div>- ${escapeHtml(x)}</div>`).join('')}
+        </div>
+      `).join('');
+    }
+    function renderCloudLogs(s) {
+      document.getElementById('cloudLogList').innerHTML = s.cloud.logs.map(x => {
+        const cls = x.level === 'critical' ? 'bad' : x.level === 'warn' ? 'high' : 'ok';
+        return `<div class="row"><strong class="${cls}">${escapeHtml(x.level.toUpperCase())} · ${escapeHtml(x.source)}</strong>${escapeHtml(x.time)}<br>${escapeHtml(x.message)}</div>`;
+      }).join('');
+    }
+    function renderMonitorAlerts(s) {
+      if (!s.cloud.monitorAlerts.length) {
+        document.getElementById('monitorAlerts').innerHTML = '<div class="row">尚未启用监控告警。请执行“启用监控告警”。</div>';
+        return;
+      }
+      document.getElementById('monitorAlerts').innerHTML = s.cloud.monitorAlerts.map(a => `
+        <div class="finding">
+          <div class="findingHeader">
+            <div class="findingTitle">${escapeHtml(a.rule)}</div>
+            <span class="badge ${severityClass(a.level)}">${severityLabel(a.level)}</span>
+          </div>
+          <div class="kv"><b>时间</b><span>${escapeHtml(a.time)}</span></div>
+          <div class="kv"><b>告警</b><span>${escapeHtml(a.message)}</span></div>
+        </div>
+      `).join('');
+    }
     async function load() {
       const res = await fetch('/api/status');
       const s = await res.json();
@@ -1223,24 +1361,10 @@ OpenClaw Skill 行为日志</div>
       ].join('');
       renderJourney(s);
 
-      const reports = s.guardianReports.map(r => {
-        return `[${r.time}] ${r.title}\n` + r.lines.map(x => `- ${x}`).join('\n');
-      }).join('\n\n');
-      document.getElementById('reports').textContent = reports || 'No guardian report yet.';
-
-      const logText = [
-        'Cloud OpenClaw Logs:',
-        ...s.cloud.logs.map(x => `[${x.time}] ${x.level.toUpperCase()} ${x.source}: ${x.message}`),
-        '',
-        'Audit Artifacts:',
-        s.cloud.auditArtifacts.bundle ? `bundle: ${s.cloud.auditArtifacts.bundle}` : 'bundle: not generated',
-        s.cloud.auditArtifacts.reportMd ? `reportMd: ${s.cloud.auditArtifacts.reportMd}` : 'reportMd: not generated',
-        s.cloud.auditArtifacts.reportJson ? `reportJson: ${s.cloud.auditArtifacts.reportJson}` : 'reportJson: not generated',
-        '',
-        'Claude Code Monitor Alerts:',
-        ...(s.cloud.monitorAlerts.length ? s.cloud.monitorAlerts.map(x => `[${x.time}] ${x.level.toUpperCase()} ${x.rule}: ${x.message}`) : ['No monitor alert yet.'])
-      ].join('\n');
-      document.getElementById('cloudLogs').textContent = logText;
+      renderFindings(s);
+      renderReportTimeline(s);
+      renderCloudLogs(s);
+      renderMonitorAlerts(s);
 
       document.getElementById('finalAudit').textContent = s.finalAudit
         ? JSON.stringify(s.finalAudit, null, 2)
