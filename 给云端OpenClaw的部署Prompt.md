@@ -113,15 +113,11 @@ http://101.47.152.44:8511/dashboard.html
 ```text
 请在服务启动后执行 Security Guardian 审计流程。
 
-有两种执行方式：
-
-方式 A：通过页面手动执行
-
 打开：
 
 http://101.47.152.44:8511/dashboard.html
 
-然后按页面按钮顺序执行：
+请按页面按钮顺序执行：
 
 1. 分析云端日志
 2. 启用监控告警
@@ -131,23 +127,7 @@ http://101.47.152.44:8511/dashboard.html
 6. denyList / 熔断
 7. 最终越权审计
 
-方式 B：由云端 OpenClaw 通过本机 HTTP 接口调度
-
-请在云服务器上依次执行：
-
-curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
-curl -X POST http://127.0.0.1:8511/claude-code/enable-monitoring
-curl -X POST http://127.0.0.1:8511/guardian/seal-control-plane
-curl -X POST http://127.0.0.1:8511/guardian/isolate-skill
-curl -X POST http://127.0.0.1:8511/guardian/rotate-secrets
-curl -X POST http://127.0.0.1:8511/guardian/apply-governance
-curl -X POST http://127.0.0.1:8511/guardian/final-audit
-
-执行后，请检查页面：
-
-http://101.47.152.44:8511/dashboard.html
-
-确认是否出现：
+执行后，请确认页面中是否出现：
 
 1. Claude Code 云端日志审计报告
 2. Claude Code 监控告警
