@@ -18,6 +18,7 @@ Security Guardian 会生成：
 
 ```text
 openclaw_security_console/runtime/security_audit_bundle.json
+openclaw_security_console/runtime/claude_code_audit_prompt.md
 ```
 
 审计包包含：
@@ -51,6 +52,29 @@ openclaw_security_console/runtime/security_audit_bundle.json
 5. 如果审计范围不足，请明确指出缺少哪些日志或配置。
 6. 最后输出是否存在 high / critical 上线阻断项。
 ```
+
+## 实际调用方式
+
+默认命令：
+
+```bash
+claude -p "<prompt>"
+```
+
+如果云端 OpenClaw 的 Claude Code 调用方式不同，可以设置：
+
+```bash
+export CLAUDE_CODE_COMMAND="claude -p"
+```
+
+Security Guardian 会记录：
+
+- Claude 调用是否成功
+- 调用 Prompt 文件路径
+- Claude 原始输出摘要
+- JSON 解析错误或 CLI 错误
+
+如果 Claude Code 没有成功调用，系统会生成 `CC-CALL-FAILED` 风险项，不会假装已经完成 Claude 审计。
 
 ## 输出结构
 

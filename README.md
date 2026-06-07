@@ -5,12 +5,24 @@
 这个项目不是攻击靶场，也不是一键修复器。它面向已经部署在云服务器上的 OpenClaw，做三件事：
 
 1. 读取真实 OpenClaw 日志、配置快照和运行证据。
-2. 生成 Claude Code 安全审计报告，指出风险位置、证据、影响和建议。
+2. 调用 Claude Code CLI 生成安全审计报告，指出风险位置、证据、影响和建议。
 3. 在页面中展示风险发现、告警规则建议、治理建议和最终复检结论。
 
 Security Guardian **不会自动修改 OpenClaw 生产配置**，也不会读取或展示真实密钥明文。所有疑似密钥字段会脱敏。
 
 ## 启动
+
+前置要求：
+
+- 云服务器已安装并登录 Claude Code CLI。
+- 默认调用命令为 `claude -p <prompt>`。
+- 如果你的 Claude Code 调用方式不同，可以设置 `CLAUDE_CODE_COMMAND`。
+
+例如：
+
+```bash
+export CLAUDE_CODE_COMMAND="claude -p"
+```
 
 云服务器推荐路径：
 
@@ -76,6 +88,7 @@ http://127.0.0.1:8511/dashboard.html
 
 ```text
 openclaw_security_console/runtime/security_audit_bundle.json
+openclaw_security_console/runtime/claude_code_audit_prompt.md
 openclaw_security_console/runtime/security_audit_report.md
 openclaw_security_console/runtime/security_audit_report.json
 ```
@@ -122,6 +135,7 @@ OPENCLAW_ROOT
 学员最终拿到的不是“已经被一键修好的 OpenClaw”，而是：
 
 - 一份真实证据驱动的 Claude Code 审计报告
+- 一份真实 Claude Code 调用 Prompt
 - 一组可转成工单的告警规则建议
 - 一组按风险类型拆开的治理建议
 - 一个上线前复检结论

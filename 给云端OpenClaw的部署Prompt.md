@@ -22,8 +22,14 @@ GitHub 仓库：https://github.com/lemons101/Security-Guardian
 
 要求：
 1. 进入 /root/projects/Security-Guardian
-2. 确认 run_dashboard.sh 可执行
-3. 使用真实 OpenClaw 目录启动：
+2. 确认云服务器已安装并登录 Claude Code CLI
+3. 确认下面命令可用：
+
+claude -p "请只回复 ok"
+
+4. 如果 Claude Code 调用命令不是 claude -p，请设置 CLAUDE_CODE_COMMAND
+5. 确认 run_dashboard.sh 可执行
+6. 使用真实 OpenClaw 目录启动：
 
 OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
 
@@ -62,10 +68,11 @@ http://101.47.152.44:8511/dashboard.html
 请检查：
 1. 8511 是否监听在 0.0.0.0
 2. OPENCLAW_ROOT 是否指向真实 OpenClaw 目录
-3. 页面是否显示扫描文件数
-4. 页面是否显示 Claude Code 风险发现
-5. 页面是否生成建议治理动作
-6. 页面是否生成最终复检结论
+3. 页面是否显示 Claude 调用成功
+4. 页面是否显示扫描文件数
+5. 页面是否显示 Claude Code 风险发现
+6. 页面是否生成建议治理动作
+7. 页面是否生成最终复检结论
 ```
 
 ## 第 5 步：输出结果
@@ -78,9 +85,10 @@ http://101.47.152.44:8511/dashboard.html
 3. 最终访问链接
 4. OPENCLAW_ROOT 实际路径
 5. 扫描文件数
-6. high / critical 风险数量
-7. 最终复检结论
-8. 审计报告路径
+6. Claude Code 是否调用成功
+7. high / critical 风险数量
+8. 最终复检结论
+9. 审计报告路径
 
 请不要声称已经完成生产治理，除非你确实修改并验证了 OpenClaw 生产配置。
 ```

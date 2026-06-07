@@ -2,6 +2,8 @@
 import json
 import os
 import re
+import shlex
+import subprocess
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,8 +55,17 @@ def initial_state():
             },
             "logs": [],
             "claudeReport": None,
+            "precheckFindings": [],
+            "claudeInvocation": {
+                "ok": False,
+                "command": "",
+                "error": "",
+                "prompt": "",
+                "rawOutput": "",
+            },
             "auditArtifacts": {
                 "bundle": "",
+                "promptMd": "",
                 "reportMd": "",
                 "reportJson": "",
             },
@@ -338,7 +349,7 @@ def build_security_audit_bundle(state):
         "openclaw_root": state["cloud"]["openclawRoot"],
         "config_snapshot": state["cloud"]["configSnapshot"],
         "logs": state["cloud"]["logs"],
-        "findings": (state["cloud"].get("claudeReport") or {}).get("findings", []),
+        "precheck_findings": state["cloud"].get("precheckFindings", []),
         "constraints": [
             "只审查审计包内容",
             "不要读取真实密钥",
@@ -348,14 +359,20 @@ def build_security_audit_bundle(state):
     }
 
 
-def write_audit_artifacts(state, report):
+def write_audit_bundle(state):
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     bundle_path = RUNTIME_DIR / "security_audit_bundle.json"
+    bundle = build_security_audit_bundle(state)
+    bundle_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    state["cloud"]["auditArtifacts"]["bundle"] = str(bundle_path.relative_to(ROOT))
+    return bundle_path
+
+
+def write_audit_artifacts(state, report):
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     report_json_path = RUNTIME_DIR / "security_audit_report.json"
     report_md_path = RUNTIME_DIR / "security_audit_report.md"
 
-    bundle = build_security_audit_bundle(state)
-    bundle_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
     report_json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     md_lines = [
@@ -387,10 +404,232 @@ def write_audit_artifacts(state, report):
     report_md_path.write_text("\n".join(md_lines), encoding="utf-8")
 
     state["cloud"]["auditArtifacts"] = {
-        "bundle": str(bundle_path.relative_to(ROOT)),
+        **state["cloud"]["auditArtifacts"],
         "reportMd": str(report_md_path.relative_to(ROOT)),
         "reportJson": str(report_json_path.relative_to(ROOT)),
     }
+
+
+def build_claude_prompt(bundle_path):
+    bundle_text = bundle_path.read_text(encoding="utf-8")
+    return f"""你现在是 Claude Code，正在被 OpenClaw 执行官 Skill 以 steer one-shot 方式调用。
+
+请对下面的 OpenClaw 安全审计包做上线前安全审查。
+
+硬性要求：
+1. 只基于审计包里的真实证据判断。
+2. 不要假设生产配置已经被修复。
+3. 不要执行任何修复动作。
+4. 不要输出真实密钥明文。
+5. 如果审计范围不足，请明确指出缺少什么。
+6. 必须只输出一个 JSON 对象，不要输出 Markdown，不要输出解释性前后缀。
+
+JSON 结构必须是：
+{{
+  "summary": {{
+    "overallRisk": "CRITICAL | HIGH | REVIEW | CLEAN",
+    "findingCount": 0,
+    "scannedFiles": 0,
+    "openclawRoot": "..."
+  }},
+  "findings": [
+    {{
+      "id": "CC-001",
+      "severity": "critical | high | medium | low",
+      "location": "文件或配置位置",
+      "evidence": "脱敏证据",
+      "risk": "影响说明",
+      "recommendation": "建议动作"
+    }}
+  ],
+  "recommendedOrder": [
+    "处置顺序 1"
+  ]
+}}
+
+OpenClaw 安全审计包如下：
+
+```json
+{bundle_text}
+```
+"""
+
+
+def claude_command_args(prompt):
+    configured = os.getenv("CLAUDE_CODE_COMMAND", "").strip()
+    if configured:
+        if "{prompt}" in configured:
+            return shlex.split(configured.replace("{prompt}", shlex.quote(prompt)))
+        return [*shlex.split(configured), prompt]
+    return ["claude", "-p", prompt]
+
+
+def extract_json_object(text):
+    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.S)
+    if match:
+        return match.group(1)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return ""
+    return text[start : end + 1]
+
+
+def normalize_finding(item, idx):
+    if not isinstance(item, dict):
+        item = {"evidence": str(item)}
+    severity = str(item.get("severity", "medium")).lower()
+    if severity not in {"critical", "high", "medium", "low"}:
+        severity = "medium"
+    return {
+        "id": str(item.get("id") or f"CC-{idx:03d}"),
+        "severity": severity,
+        "location": str(item.get("location") or "未标明位置"),
+        "evidence": redact_sensitive(str(item.get("evidence") or "Claude Code 未返回证据")),
+        "risk": str(item.get("risk") or "Claude Code 未返回影响说明"),
+        "recommendation": str(item.get("recommendation") or "请人工复核该风险。"),
+    }
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def report_from_claude_json(parsed, state, evidence, raw_output):
+    if not isinstance(parsed, dict):
+        parsed = {}
+    findings = [normalize_finding(item, idx + 1) for idx, item in enumerate(parsed.get("findings") or [])]
+    summary = parsed.get("summary") or {}
+    overall_risk = str(summary.get("overallRisk") or "").upper()
+    if overall_risk not in {"CRITICAL", "HIGH", "REVIEW", "CLEAN"}:
+        if any(item["severity"] == "critical" for item in findings):
+            overall_risk = "CRITICAL"
+        elif any(item["severity"] == "high" for item in findings):
+            overall_risk = "HIGH"
+        elif findings:
+            overall_risk = "REVIEW"
+        else:
+            overall_risk = "CLEAN"
+    return {
+        "time": now(),
+        "auditor": "Claude Code",
+        "target": state["cloud"]["runtime"],
+        "server": state["cloud"]["server"],
+        "auditMethod": state["cloud"]["auditMethod"],
+        "logWindow": state["cloud"]["logWindow"],
+        "summary": {
+            "criticalLogs": sum(1 for item in state["cloud"]["logs"] if item["level"] == "critical"),
+            "warnLogs": sum(1 for item in state["cloud"]["logs"] if item["level"] == "warn"),
+            "findingCount": safe_int(summary.get("findingCount"), len(findings)),
+            "overallRisk": overall_risk,
+            "scannedFiles": safe_int(summary.get("scannedFiles"), evidence["scanned_files"]),
+            "openclawRoot": str(summary.get("openclawRoot") or evidence["root"]),
+        },
+        "findings": findings,
+        "recommendedOrder": [str(item) for item in (parsed.get("recommendedOrder") or [])],
+        "rawOutput": raw_output[:8000],
+    }
+
+
+def report_from_claude_failure(state, evidence, error, raw_output=""):
+    return {
+        "time": now(),
+        "auditor": "Claude Code",
+        "target": state["cloud"]["runtime"],
+        "server": state["cloud"]["server"],
+        "auditMethod": state["cloud"]["auditMethod"],
+        "logWindow": state["cloud"]["logWindow"],
+        "summary": {
+            "criticalLogs": sum(1 for item in state["cloud"]["logs"] if item["level"] == "critical"),
+            "warnLogs": sum(1 for item in state["cloud"]["logs"] if item["level"] == "warn"),
+            "findingCount": 1,
+            "overallRisk": "HIGH",
+            "scannedFiles": evidence["scanned_files"],
+            "openclawRoot": evidence["root"],
+        },
+        "findings": [
+            {
+                "id": "CC-CALL-FAILED",
+                "severity": "high",
+                "location": "Claude Code CLI",
+                "evidence": redact_sensitive(error),
+                "risk": "未成功调用 Claude Code，当前无法生成可信的 Claude 审计结论。",
+                "recommendation": "在云服务器安装并登录 Claude Code CLI，或设置 CLAUDE_CODE_COMMAND 后重新执行真实检测。",
+            }
+        ],
+        "recommendedOrder": [
+            "1. 先修复 Claude Code 调用链路。",
+            "2. 确认 OPENCLAW_ROOT 指向真实 OpenClaw 目录。",
+            "3. 重新执行 Security Guardian 真实检测。",
+        ],
+        "rawOutput": raw_output[:8000],
+    }
+
+
+def run_claude_code_audit(state, evidence, bundle_path):
+    prompt = build_claude_prompt(bundle_path)
+    prompt_path = RUNTIME_DIR / "claude_code_audit_prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    state["cloud"]["auditArtifacts"]["promptMd"] = str(prompt_path.relative_to(ROOT))
+
+    timeout = int(os.getenv("CLAUDE_CODE_TIMEOUT", "120"))
+    args = claude_command_args(prompt)
+    state["cloud"]["claudeInvocation"] = {
+        "ok": False,
+        "command": " ".join(args[:2]) if args else "",
+        "error": "",
+        "prompt": str(prompt_path.relative_to(ROOT)),
+        "rawOutput": "",
+    }
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=str(ROOT.parent),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        error = f"未找到 Claude Code 命令：{args[0] if args else 'claude'}。{exc}"
+        state["cloud"]["claudeInvocation"]["error"] = error
+        return report_from_claude_failure(state, evidence, error)
+    except subprocess.TimeoutExpired:
+        error = f"Claude Code 调用超时：超过 {timeout} 秒。"
+        state["cloud"]["claudeInvocation"]["error"] = error
+        return report_from_claude_failure(state, evidence, error)
+    except Exception as exc:
+        error = f"Claude Code 调用异常：{exc}"
+        state["cloud"]["claudeInvocation"]["error"] = error
+        return report_from_claude_failure(state, evidence, error)
+
+    raw_output = (completed.stdout or "").strip()
+    raw_error = (completed.stderr or "").strip()
+    state["cloud"]["claudeInvocation"]["rawOutput"] = redact_sensitive(raw_output[:8000])
+    if completed.returncode != 0:
+        error = f"Claude Code 返回非零退出码 {completed.returncode}：{raw_error or raw_output}"
+        state["cloud"]["claudeInvocation"]["error"] = redact_sensitive(error)
+        return report_from_claude_failure(state, evidence, error, raw_output)
+
+    json_text = extract_json_object(raw_output)
+    if not json_text:
+        error = "Claude Code 已返回内容，但没有返回可解析的 JSON 对象。"
+        state["cloud"]["claudeInvocation"]["error"] = error
+        return report_from_claude_failure(state, evidence, error, raw_output)
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError as exc:
+        error = f"Claude Code JSON 解析失败：{exc}"
+        state["cloud"]["claudeInvocation"]["error"] = error
+        return report_from_claude_failure(state, evidence, error, raw_output)
+
+    state["cloud"]["claudeInvocation"]["ok"] = True
+    return report_from_claude_json(parsed, state, evidence, raw_output)
 
 
 def compute_risk(state):
@@ -442,6 +681,7 @@ def claude_code_analyze_cloud(state):
     state["workflow"]["scan"] = True
     state["cloud"]["openclawRoot"] = evidence["root"]
     state["cloud"]["logs"] = evidence["logs"]
+    state["cloud"]["precheckFindings"] = evidence["findings"]
     state["cloud"]["configSnapshot"] = {
         "openPorts": evidence["open_ports"],
         "websocketBind": evidence["websocket_bind"],
@@ -451,66 +691,36 @@ def claude_code_analyze_cloud(state):
         "tokenBudgetEnabled": evidence["token_budget_enabled"],
     }
 
-    logs = state["cloud"]["logs"]
-    critical_count = sum(1 for item in logs if item["level"] == "critical")
-    warn_count = sum(1 for item in logs if item["level"] == "warn")
-    findings = evidence["findings"]
-
-    if not findings:
-        findings = [
-            {
-                "id": "CC-INFO",
-                "severity": "medium",
-                "location": evidence["root"] or "OPENCLAW_ROOT",
-                "evidence": f"已扫描 {evidence['scanned_files']} 个审计文件，未命中内置高危模式。",
-                "risk": "未发现明确高危证据，但这不等同于安全通过；需要确认审计范围是否覆盖真实 OpenClaw。",
-                "recommendation": "确认 OPENCLAW_ROOT、日志目录、Skill manifest 和 Token 用量记录均已纳入审计包。",
-            }
-        ]
-
-    overall_risk = "CRITICAL" if any(f["severity"] == "critical" for f in findings) else "HIGH" if any(f["severity"] == "high" for f in findings) else "REVIEW"
-    report = {
-        "time": now(),
-        "auditor": "Claude Code",
-        "target": state["cloud"]["runtime"],
-        "server": state["cloud"]["server"],
-        "auditMethod": state["cloud"]["auditMethod"],
-        "logWindow": state["cloud"]["logWindow"],
-        "summary": {
-            "criticalLogs": critical_count,
-            "warnLogs": warn_count,
-            "findingCount": len(findings),
-            "overallRisk": overall_risk,
-            "scannedFiles": evidence["scanned_files"],
-            "openclawRoot": evidence["root"],
-        },
-        "findings": findings,
-        "recommendedOrder": [
+    bundle_path = write_audit_bundle(state)
+    report = run_claude_code_audit(state, evidence, bundle_path)
+    if not report["recommendedOrder"]:
+        report["recommendedOrder"] = [
             "1. 优先处理 critical/high 风险发现。",
-            "2. 若发现 Token 暴露，立即吊销并轮换。",
-            "3. 若发现 Skill 访问敏感目录或外传证据，先隔离再复审。",
-            "4. 启用 denyList、Token 熔断、审计日志和异常告警。",
-            "5. 确认审计范围覆盖真实 OpenClaw 后，再给出上线结论。",
-        ],
-    }
+            "2. 处理后重新执行 Security Guardian 真实检测。",
+            "3. 用最终复检结论判断是否进入上线前人工复核。",
+        ]
     state["cloud"]["claudeReport"] = report
     write_audit_artifacts(state, report)
 
     lines = [
         f"审计目标：{report['target']} on {report['server']}",
         f"调用方式：{report['auditMethod']}",
+        f"Claude 调用：{'成功' if state['cloud']['claudeInvocation']['ok'] else '失败'}",
         f"日志窗口：{report['logWindow']}",
         f"OpenClaw 根目录：{evidence['root'] or '未找到，请设置 OPENCLAW_ROOT'}",
         f"扫描文件数：{evidence['scanned_files']}",
-        f"发现数量：{len(findings)}；整体风险：{report['summary']['overallRisk']}",
+        f"发现数量：{len(report['findings'])}；整体风险：{report['summary']['overallRisk']}",
         f"审计包：{state['cloud']['auditArtifacts']['bundle']}",
+        f"Claude Prompt：{state['cloud']['auditArtifacts']['promptMd']}",
         f"Markdown 报告：{state['cloud']['auditArtifacts']['reportMd']}",
         f"JSON 报告：{state['cloud']['auditArtifacts']['reportJson']}",
     ]
-    for item in findings:
+    if state["cloud"]["claudeInvocation"]["error"]:
+        lines.append(f"Claude 调用错误：{state['cloud']['claudeInvocation']['error']}")
+    for item in report["findings"]:
         lines.append(f"{item['id']} {item['severity'].upper()}｜位置：{item['location']}｜证据：{item['evidence']}")
         lines.append(f"建议：{item['recommendation']}")
-    add_event(state, "claude_code_log_audit", state["cloud"]["server"], True, "high")
+    add_event(state, "claude_code_log_audit", state["cloud"]["server"], state["cloud"]["claudeInvocation"]["ok"], "high")
     return add_report(state, "Claude Code 云端日志审计报告", lines)
 
 def claude_code_enable_monitoring(state):
@@ -1131,6 +1341,7 @@ OpenClaw 工具调用审计日志</div>
       if (r === 'CRITICAL') return 'critical';
       if (r === 'HIGH' || r === 'ELEVATED') return 'high';
       if (r === 'REVIEW') return 'medium';
+      if (r === 'CLEAN') return 'controlled';
       return 'controlled';
     }
     function riskBox(r) {
@@ -1278,10 +1489,12 @@ OpenClaw 工具调用审计日志</div>
       const secretStorage = s.cloud.configSnapshot.secretStorage === 'plain env file' ? '明文环境文件' : s.cloud.configSnapshot.secretStorage;
       const openPorts = s.cloud.configSnapshot.openPorts.length ? s.cloud.configSnapshot.openPorts.join(', ') : '待检测';
       const websocketBind = s.cloud.configSnapshot.websocketBind || '待检测';
+      const claudeCall = s.cloud.claudeInvocation && s.cloud.claudeInvocation.ok ? '成功' : report ? '失败' : '待调用';
       document.getElementById('cloudStatusGrid').innerHTML = [
         item('云服务器', s.cloud.server, '', 'safeBox'),
         item('运行时', runtime, '', 'safeBox'),
         item('调用方式', callMethod, 'controlled', 'safeBox'),
+        item('Claude 调用', claudeCall, claudeCall === '成功' ? 'controlled' : 'high', claudeCall === '成功' ? 'safeBox' : 'highBox'),
         item('日志窗口', logWindow, '', 'safeBox'),
         item('OpenClaw 根目录', s.cloud.openclawRoot || '待检测', s.cloud.openclawRoot ? 'controlled' : 'high', s.cloud.openclawRoot ? 'safeBox' : 'highBox'),
         item('开放端口', openPorts, s.cloud.configSnapshot.openPorts.length ? 'high' : '', s.cloud.configSnapshot.openPorts.length ? 'highBox' : ''),
