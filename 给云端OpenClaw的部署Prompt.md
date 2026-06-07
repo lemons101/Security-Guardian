@@ -46,6 +46,16 @@ git pull
 执行：
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
+
+请先确认真实 OpenClaw 项目目录。
+如果存在 /root/projects/OpenClaw，请使用：
+
+OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
+
+如果实际目录不是 /root/projects/OpenClaw，请把 OPENCLAW_ROOT 改成真实 OpenClaw 目录。
+
+如果暂时找不到真实 OpenClaw 目录，再执行：
+
 ./run_dashboard.sh
 
 run_dashboard.sh 默认应监听：
@@ -76,10 +86,11 @@ curl -X POST http://127.0.0.1:8511/guardian/final-audit
    要求监听地址为 0.0.0.0:8511，而不是 127.0.0.1:8511
 2. 页面是否可访问：
    http://101.47.152.44:8511/dashboard.html
-3. 审计包是否生成
-4. 审计报告是否生成
-5. 最终越权审计是否通过
-6. 页面是否显示上线结论
+3. 页面中的 OpenClaw 根目录是否指向真实项目，而不是“待检测”
+4. 审计包是否生成
+5. 审计报告是否生成
+6. 最终越权审计是否通过
+7. 页面是否显示上线结论
 
 第六步：输出最终结果
 

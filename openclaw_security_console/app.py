@@ -1,7 +1,8 @@
-import copy
+﻿import copy
 import html
 import json
 import os
+import re
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -101,64 +102,16 @@ def initial_state():
             "auditMethod": "steer one-shot",
             "monitoringEnabled": False,
             "logWindow": "last 24h",
+            "openclawRoot": "",
             "configSnapshot": {
-                "openPorts": ["22/tcp", "80/tcp", "443/tcp", "7070/tcp"],
-                "websocketBind": "0.0.0.0:7070",
-                "skillSources": ["official", "community-market"],
-                "secretStorage": "plain env file",
-                "auditLogEnabled": False,
-                "tokenBudgetEnabled": False,
+                "openPorts": [],
+                "websocketBind": "未检测",
+                "skillSources": [],
+                "secretStorage": "未检测",
+                "auditLogEnabled": None,
+                "tokenBudgetEnabled": None,
             },
-            "logs": [
-                {
-                    "time": "2026-06-07 08:12:09",
-                    "source": "nginx",
-                    "level": "warn",
-                    "message": "Repeated websocket upgrade attempts from 203.0.113.91 to /ws/control",
-                },
-                {
-                    "time": "2026-06-07 08:13:22",
-                    "source": "openclaw-control",
-                    "level": "critical",
-                    "message": "Control-plane request accepted without Origin validation",
-                },
-                {
-                    "time": "2026-06-07 08:14:01",
-                    "source": "openclaw-control",
-                    "level": "critical",
-                    "message": "Access token observed in websocket query string: token=openclaw-old-token-leaked",
-                },
-                {
-                    "time": "2026-06-07 08:18:45",
-                    "source": "skill-manager",
-                    "level": "warn",
-                    "message": "Installed community skill reconcile-plus without signature verification",
-                },
-                {
-                    "time": "2026-06-07 08:19:02",
-                    "source": "skill-runner",
-                    "level": "critical",
-                    "message": "reconcile-plus requested read access to /lab/data/secrets and /lab/data/finance",
-                },
-                {
-                    "time": "2026-06-07 08:20:31",
-                    "source": "egress-proxy",
-                    "level": "critical",
-                    "message": "Outbound POST attempt to http://webhook:8088/collect from reconcile-plus",
-                },
-                {
-                    "time": "2026-06-07 09:02:10",
-                    "source": "token-meter",
-                    "level": "warn",
-                    "message": "Model token usage spiked to 184000 tokens within 18 minutes",
-                },
-                {
-                    "time": "2026-06-07 09:07:55",
-                    "source": "policy-engine",
-                    "level": "warn",
-                    "message": "denyList is empty; command curl --data would not be blocked",
-                },
-            ],
+            "logs": [],
             "claudeReport": None,
             "auditArtifacts": {
                 "bundle": "",
@@ -207,6 +160,217 @@ def add_report(state, title, lines):
     state["guardianReports"].insert(0, report)
     state["guardianReports"] = state["guardianReports"][:20]
     return report
+
+
+SENSITIVE_VALUE_RE = re.compile(r"(?i)(token|secret|api[_-]?key|password|passwd|private[_-]?key)(\s*[:=]\s*)(['\"]?)[^'\"\s,}]+")
+
+
+def redact_sensitive(text):
+    return SENSITIVE_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}<REDACTED>", text)
+
+
+def find_openclaw_root():
+    env_root = os.getenv("OPENCLAW_ROOT", "").strip()
+    candidates = []
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.extend(
+        [
+            Path("/root/projects/OpenClaw"),
+            Path("/root/projects/openclaw"),
+            Path("/root/projects/Openclaw"),
+            Path("/root/projects"),
+            ROOT.parent,
+        ]
+    )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            if candidate.name.lower() == "security-guardian":
+                continue
+            return candidate.resolve()
+    return None
+
+
+def parse_proc_net_tcp(path):
+    ports = []
+    proc = Path(path)
+    if not proc.exists():
+        return ports
+    try:
+        lines = proc.read_text(encoding="utf-8", errors="ignore").splitlines()[1:]
+    except Exception:
+        return ports
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 4 or parts[3] != "0A":
+            continue
+        local = parts[1]
+        addr_hex, port_hex = local.split(":")
+        try:
+            port = int(port_hex, 16)
+        except ValueError:
+            continue
+        if path.endswith("tcp6"):
+            bind = "::" if set(addr_hex) == {"0"} else "tcp6"
+        else:
+            bind = "0.0.0.0" if addr_hex == "00000000" else "127.0.0.1" if addr_hex == "0100007F" else "tcp"
+        ports.append({"port": port, "bind": bind})
+    return ports
+
+
+def collect_open_ports():
+    ports = parse_proc_net_tcp("/proc/net/tcp") + parse_proc_net_tcp("/proc/net/tcp6")
+    seen = set()
+    result = []
+    for item in ports:
+        key = (item["bind"], item["port"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return sorted(result, key=lambda x: x["port"])
+
+
+def safe_read_text(path, max_bytes=200_000):
+    try:
+        with path.open("rb") as fh:
+            data = fh.read(max_bytes)
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def iter_audit_files(root):
+    if not root:
+        return []
+    allowed_suffixes = {".log", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".toml", ".conf", ".md"}
+    skip_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", "site-packages"}
+    files = []
+    try:
+        for path in root.rglob("*"):
+            if len(files) >= 180:
+                break
+            if any(part in skip_dirs for part in path.parts):
+                continue
+            if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+                continue
+            try:
+                if path.stat().st_size > 2_000_000:
+                    continue
+            except Exception:
+                continue
+            files.append(path)
+    except Exception:
+        return files
+    return files
+
+
+def evidence_event(source, level, message):
+    return {"time": now(), "source": source, "level": level, "message": redact_sensitive(message)[:500]}
+
+
+def collect_real_openclaw_evidence():
+    root = find_openclaw_root()
+    ports = collect_open_ports()
+    open_ports = [f"{item['bind']}:{item['port']}/tcp" for item in ports]
+    logs = []
+    findings = []
+    skill_sources = set()
+    audit_log_enabled = None
+    token_budget_enabled = None
+    secret_storage = "未发现明文密钥证据"
+    websocket_bind = "未检测"
+
+    for item in ports:
+        if item["port"] in {7070, 7071, 8080, 8511}:
+            if item["port"] == 7070:
+                websocket_bind = f"{item['bind']}:{item['port']}"
+            if item["bind"] in {"0.0.0.0", "::"} and item["port"] == 7070:
+                logs.append(evidence_event("proc-net", "critical", f"OpenClaw control-plane candidate listens on {item['bind']}:{item['port']}"))
+
+    files = iter_audit_files(root) if root else []
+    if not root:
+        logs.append(evidence_event("auditor", "warn", "未找到 OpenClaw 根目录。请设置 OPENCLAW_ROOT 指向真实 OpenClaw 项目目录。"))
+        findings.append(
+            {
+                "id": "CC-000",
+                "severity": "high",
+                "location": "OPENCLAW_ROOT",
+                "evidence": "未配置 OPENCLAW_ROOT，且未在 /root/projects 下发现明确 OpenClaw 目录",
+                "risk": "审计范围不明确，Claude Code 无法确认是否覆盖真实生产 OpenClaw。",
+                "recommendation": "启动 Security Guardian 前设置 OPENCLAW_ROOT=/path/to/openclaw，并重新执行审计。",
+            }
+        )
+
+    patterns = [
+        ("CC-001", "critical", "control-plane", re.compile(r"(?i)(0\.0\.0\.0|::).{0,40}(7070|websocket|control|ws)"), "控制面疑似暴露在公网监听地址。", "将控制面限制到内网/VPN，启用强鉴权和 Origin 校验。"),
+        ("CC-002", "critical", "token-in-log", re.compile(r"(?i)(token|access_token|authorization).{0,20}(=|:).{4,}"), "日志中疑似出现 Token 或鉴权信息。", "立即吊销相关 Token，禁止 URL 查询串携带凭证，并脱敏日志。"),
+        ("CC-003", "high", "unsigned-skill", re.compile(r"(?i)(community|market|skill).{0,80}(unsigned|signature\\s*[:=]\\s*false|未签名|未校验)"), "社区 Skill 可能未经过签名或来源校验。", "启用 Skill 签名校验，未签名 Skill 不允许进入生产。"),
+        ("CC-004", "critical", "sensitive-path", re.compile(r"(?i)(/secrets|\\.env|id_rsa|credentials|finance|密钥|私钥).{0,80}(read|request|access|读取|请求|访问)"), "日志显示存在读取敏感目录或敏感文件的行为。", "限制文件访问边界，敏感目录需要审批或默认拒绝。"),
+        ("CC-005", "critical", "egress", re.compile(r"(?i)(curl\\s+--data|wget\\s+--post|POST\\s+http|webhook|外传|出站)"), "日志显示存在可疑网络出站或外传行为。", "默认拒绝出站网络，只允许白名单 API。"),
+        ("CC-006", "high", "token-spike", re.compile(r"(?i)(token).{0,40}(spike|surge|暴涨|超限|[1-9][0-9]{5,})"), "Token 用量可能异常增长。", "配置单任务和每日 Token 熔断，超限暂停并告警。"),
+        ("CC-007", "medium", "denylist-empty", re.compile(r"(?i)(denyList|deny_list|黑名单).{0,40}(empty|\\[\\]|空|false)"), "高危命令或敏感文件 denyList 可能未配置。", "启用 denyList，覆盖外传、删除、读取密钥等高危模式。"),
+        ("CC-008", "medium", "audit-disabled", re.compile(r"(?i)(auditLog|audit_log|审计).{0,40}(false|disabled|关闭)"), "审计日志可能未启用。", "启用工具调用、拒绝动作和网络请求审计。"),
+    ]
+
+    seen_findings = set()
+    for path in files:
+        rel = str(path.relative_to(root)) if root and str(path).startswith(str(root)) else str(path)
+        content = safe_read_text(path)
+        if not content:
+            continue
+        low = content.lower()
+        if "community-market" in low or "community" in low:
+            skill_sources.add("community-market")
+        if "official" in low:
+            skill_sources.add("official")
+        if re.search(r"(?i)(api[_-]?key|secret|token|password)\\s*[:=]\\s*['\"]?[^'\"\\s]+", content):
+            secret_storage = "发现疑似明文凭证配置，已脱敏"
+        if re.search(r"(?i)(auditLog|audit_log).{0,40}(true|enabled|开启)", content):
+            audit_log_enabled = True
+        if re.search(r"(?i)(auditLog|audit_log).{0,40}(false|disabled|关闭)", content):
+            audit_log_enabled = False
+        if re.search(r"(?i)(tokenBudget|token_budget|熔断).{0,40}(true|enabled|开启)", content):
+            token_budget_enabled = True
+        if re.search(r"(?i)(tokenBudget|token_budget|熔断).{0,40}(false|disabled|关闭)", content):
+            token_budget_enabled = False
+        for fid, severity, source, regex, risk, recommendation in patterns:
+            match = regex.search(content)
+            if not match:
+                continue
+            key = (fid, rel)
+            if key in seen_findings:
+                continue
+            seen_findings.add(key)
+            line = next((line.strip() for line in content.splitlines() if regex.search(line)), match.group(0))
+            redacted = redact_sensitive(line)
+            logs.append(evidence_event(rel, severity, redacted))
+            findings.append(
+                {
+                    "id": fid,
+                    "severity": severity,
+                    "location": rel,
+                    "evidence": redacted,
+                    "risk": risk,
+                    "recommendation": recommendation,
+                }
+            )
+
+    if not findings and root:
+        logs.append(evidence_event("auditor", "warn", f"已扫描 {len(files)} 个审计文件，未命中内置高危模式。"))
+
+    return {
+        "root": str(root) if root else "",
+        "open_ports": open_ports,
+        "websocket_bind": websocket_bind,
+        "skill_sources": sorted(skill_sources),
+        "secret_storage": secret_storage,
+        "audit_log_enabled": audit_log_enabled,
+        "token_budget_enabled": token_budget_enabled,
+        "logs": logs[:80],
+        "findings": findings[:40],
+        "scanned_files": len(files),
+    }
 
 
 def build_security_audit_bundle(state):
@@ -488,59 +652,36 @@ def guardian_scan(state):
 
 
 def claude_code_analyze_cloud(state):
+    evidence = collect_real_openclaw_evidence()
+    state["cloud"]["openclawRoot"] = evidence["root"]
+    state["cloud"]["logs"] = evidence["logs"]
+    state["cloud"]["configSnapshot"] = {
+        "openPorts": evidence["open_ports"],
+        "websocketBind": evidence["websocket_bind"],
+        "skillSources": evidence["skill_sources"],
+        "secretStorage": evidence["secret_storage"],
+        "auditLogEnabled": evidence["audit_log_enabled"],
+        "tokenBudgetEnabled": evidence["token_budget_enabled"],
+    }
+
     logs = state["cloud"]["logs"]
     critical_count = sum(1 for item in logs if item["level"] == "critical")
     warn_count = sum(1 for item in logs if item["level"] == "warn")
-    findings = [
-        {
-            "id": "CC-001",
-            "severity": "critical",
-            "location": "cloud.configSnapshot.websocketBind",
-            "evidence": "websocketBind=0.0.0.0:7070; logs show repeated upgrade attempts to /ws/control",
-            "risk": "控制面暴露在云服务器网络边界上，存在远程接管风险。",
-            "recommendation": "限制绑定地址、启用强鉴权、校验 Origin，并把控制面放入内网或 VPN。",
-        },
-        {
-            "id": "CC-002",
-            "severity": "critical",
-            "location": "openclaw-control logs",
-            "evidence": "Access token observed in websocket query string: token=openclaw-old-token-leaked",
-            "risk": "Token 出现在 URL 查询串中，可能被代理日志、浏览器历史或监控系统记录。",
-            "recommendation": "立即吊销旧 Token，改用短期 Bearer Token，并禁止 URL 携带凭证。",
-        },
-        {
-            "id": "CC-003",
-            "severity": "high",
-            "location": "skill-manager / skills.reconcile-plus",
-            "evidence": "Installed community skill reconcile-plus without signature verification",
-            "risk": "社区 Skill 未签名校验，可能引入供应链投毒。",
-            "recommendation": "对社区 Skill 启用签名校验、最小权限沙盒和默认拒绝出站策略。",
-        },
-        {
-            "id": "CC-004",
-            "severity": "critical",
-            "location": "skill-runner / egress-proxy",
-            "evidence": "reconcile-plus requested /secrets and attempted POST to webhook",
-            "risk": "Skill 同时具备敏感文件读取和外传路径，形成完整泄露链。",
-            "recommendation": "禁止读取 secrets 与 finance 原始库，网络出站改为白名单。",
-        },
-        {
-            "id": "CC-005",
-            "severity": "high",
-            "location": "token-meter / governance.tokenBudget",
-            "evidence": "Model token usage spiked to 184000 tokens within 18 minutes; tokenBudgetEnabled=false",
-            "risk": "缺少每日 Token 熔断，可能被诱导刷爆预算或进入无人值守失控状态。",
-            "recommendation": "配置单任务和每日 Token 上限，超限自动暂停并告警。",
-        },
-        {
-            "id": "CC-006",
-            "severity": "medium",
-            "location": "policy-engine / tools.runCommand.denyList",
-            "evidence": "denyList is empty; command curl --data would not be blocked",
-            "risk": "高危命令缺少统一拦截，外传、删除和反连命令可能被执行。",
-            "recommendation": "启用 denyList，覆盖 curl --data、wget --post-file、nc -e、rm -rf、读取 .env 等模式。",
-        },
-    ]
+    findings = evidence["findings"]
+
+    if not findings:
+        findings = [
+            {
+                "id": "CC-INFO",
+                "severity": "medium",
+                "location": evidence["root"] or "OPENCLAW_ROOT",
+                "evidence": f"已扫描 {evidence['scanned_files']} 个审计文件，未命中内置高危模式。",
+                "risk": "未发现明确高危证据，但这不等同于安全通过；需要确认审计范围是否覆盖真实 OpenClaw。",
+                "recommendation": "确认 OPENCLAW_ROOT、日志目录、Skill manifest 和 Token 用量记录均已纳入审计包。",
+            }
+        ]
+
+    overall_risk = "CRITICAL" if any(f["severity"] == "critical" for f in findings) else "HIGH" if any(f["severity"] == "high" for f in findings) else "REVIEW"
     report = {
         "time": now(),
         "auditor": "Claude Code",
@@ -552,23 +693,28 @@ def claude_code_analyze_cloud(state):
             "criticalLogs": critical_count,
             "warnLogs": warn_count,
             "findingCount": len(findings),
-            "overallRisk": "CRITICAL" if critical_count else "HIGH",
+            "overallRisk": overall_risk,
+            "scannedFiles": evidence["scanned_files"],
+            "openclawRoot": evidence["root"],
         },
         "findings": findings,
         "recommendedOrder": [
-            "1. 立刻封堵控制面：强鉴权、Origin 校验、内网化或 VPN。",
-            "2. 吊销疑似泄露 Token，切换短期凭证。",
-            "3. 隔离 reconcile-plus，禁止读取 secrets / finance，默认拒绝出站。",
+            "1. 优先处理 critical/high 风险发现。",
+            "2. 若发现 Token 暴露，立即吊销并轮换。",
+            "3. 若发现 Skill 访问敏感目录或外传证据，先隔离再复审。",
             "4. 启用 denyList、Token 熔断、审计日志和异常告警。",
-            "5. 完成最终越权审计后再允许无人值守运行。",
+            "5. 确认审计范围覆盖真实 OpenClaw 后，再给出上线结论。",
         ],
     }
     state["cloud"]["claudeReport"] = report
     write_audit_artifacts(state, report)
+
     lines = [
         f"审计目标：{report['target']} on {report['server']}",
         f"调用方式：{report['auditMethod']}",
         f"日志窗口：{report['logWindow']}",
+        f"OpenClaw 根目录：{evidence['root'] or '未找到，请设置 OPENCLAW_ROOT'}",
+        f"扫描文件数：{evidence['scanned_files']}",
         f"发现数量：{len(findings)}；整体风险：{report['summary']['overallRisk']}",
         f"审计包：{state['cloud']['auditArtifacts']['bundle']}",
         f"Markdown 报告：{state['cloud']['auditArtifacts']['reportMd']}",
@@ -580,29 +726,30 @@ def claude_code_analyze_cloud(state):
     add_event(state, "claude_code_log_audit", state["cloud"]["server"], True, "high")
     return add_report(state, "Claude Code 云端日志审计报告", lines)
 
-
 def claude_code_enable_monitoring(state):
     state["cloud"]["monitoringEnabled"] = True
-    alerts = [
-        {
-            "time": now(),
-            "level": "critical",
-            "rule": "control-plane-token-in-url",
-            "message": "发现控制面 Token 出现在 URL 查询串，建议立即吊销。",
-        },
-        {
-            "time": now(),
-            "level": "critical",
-            "rule": "skill-secret-egress-chain",
-            "message": "发现社区 Skill 同时请求 secrets 并尝试外传，建议隔离 Skill。",
-        },
-        {
-            "time": now(),
-            "level": "warn",
-            "rule": "token-usage-spike",
-            "message": "发现短时间 Token 用量异常增长，建议启用每日熔断。",
-        },
-    ]
+    findings = (state["cloud"].get("claudeReport") or {}).get("findings", [])
+    alerts = []
+    for item in findings:
+        if item["severity"] not in {"critical", "high"}:
+            continue
+        alerts.append(
+            {
+                "time": now(),
+                "level": item["severity"],
+                "rule": item["id"],
+                "message": f"{item['location']}：{item['risk']}",
+            }
+        )
+    if not alerts:
+        alerts.append(
+            {
+                "time": now(),
+                "level": "warn",
+                "rule": "audit-coverage-review",
+                "message": "未发现 high/critical 告警，请确认 OPENCLAW_ROOT 和日志范围是否覆盖真实 OpenClaw。",
+            }
+        )
     state["cloud"]["monitorAlerts"] = alerts
     add_event(state, "claude_code_monitoring", state["cloud"]["server"], True, "medium")
     return add_report(
@@ -610,8 +757,8 @@ def claude_code_enable_monitoring(state):
         "Claude Code 监控已启用",
         [
             "监控对象：OpenClaw 控制面、Skill 行为、网络出站、Token 用量、denyList 命中。",
-            "已生成 3 条模拟告警。",
-            "后续课堂可让学员把这些告警转成处置工单或上线阻断条件。",
+            f"已基于真实审计发现生成 {len(alerts)} 条告警。",
+            "这些告警可转为处置工单、上线阻断条件或人工复核项。",
         ],
     )
 
@@ -1096,7 +1243,7 @@ def page_html():
   <header>
     <div>
       <h1>OpenClaw 安全自审计控制台</h1>
-      <div class="sub">模拟云服务器上的 OpenClaw 主动调用 Claude Code，对自己的日志、配置和运行行为进行安全自审计</div>
+      <div class="sub">云服务器上的 OpenClaw 主动调用 Claude Code，对自己的日志、配置和运行行为进行安全自审计</div>
       <div class="topline">
         <span class="pill">Cloud OpenClaw = 自审计发起方</span>
         <span class="pill">Claude Code = 日志审计与报告生成</span>
@@ -1304,6 +1451,10 @@ OpenClaw Skill 行为日志</div>
       `).join('');
     }
     function renderCloudLogs(s) {
+      if (!s.cloud.logs.length) {
+        document.getElementById('cloudLogList').innerHTML = '<div class="row">尚未执行真实检测。请先执行“分析云端日志”。</div>';
+        return;
+      }
       document.getElementById('cloudLogList').innerHTML = s.cloud.logs.map(x => {
         const cls = x.level === 'critical' ? 'bad' : x.level === 'warn' ? 'high' : 'ok';
         return `<div class="row"><strong class="${cls}">${escapeHtml(x.level.toUpperCase())} · ${escapeHtml(x.source)}</strong>${escapeHtml(x.time)}<br>${escapeHtml(x.message)}</div>`;
@@ -1336,15 +1487,18 @@ OpenClaw Skill 行为日志</div>
         .map(x => x === 'official' ? '官方' : x === 'community-market' ? '社区市场' : x)
         .join(', ');
       const secretStorage = s.cloud.configSnapshot.secretStorage === 'plain env file' ? '明文环境文件' : s.cloud.configSnapshot.secretStorage;
+      const openPorts = s.cloud.configSnapshot.openPorts.length ? s.cloud.configSnapshot.openPorts.join(', ') : '待检测';
+      const websocketBind = s.cloud.configSnapshot.websocketBind || '待检测';
       document.getElementById('cloudStatusGrid').innerHTML = [
         item('云服务器', s.cloud.server, '', 'safeBox'),
         item('运行时', runtime, '', 'safeBox'),
         item('调用方式', callMethod, 'controlled', 'safeBox'),
         item('日志窗口', logWindow, '', 'safeBox'),
-        item('开放端口', s.cloud.configSnapshot.openPorts.join(', '), 'high', 'highBox'),
-        item('WebSocket 绑定', s.cloud.configSnapshot.websocketBind, 'critical', 'criticalBox'),
-        item('Skill 来源', skillSources, 'high', 'highBox'),
-        item('密钥存储', secretStorage, 'critical', 'criticalBox'),
+        item('OpenClaw 根目录', s.cloud.openclawRoot || '待检测', s.cloud.openclawRoot ? 'controlled' : 'high', s.cloud.openclawRoot ? 'safeBox' : 'highBox'),
+        item('开放端口', openPorts, s.cloud.configSnapshot.openPorts.length ? 'high' : '', s.cloud.configSnapshot.openPorts.length ? 'highBox' : ''),
+        item('WebSocket 绑定', websocketBind, websocketBind !== '未检测' && websocketBind !== '待检测' ? 'critical' : '', websocketBind !== '未检测' && websocketBind !== '待检测' ? 'criticalBox' : ''),
+        item('Skill 来源', skillSources || '待检测', skillSources ? 'high' : '', skillSources ? 'highBox' : ''),
+        item('密钥存储', secretStorage, secretStorage.includes('明文') ? 'critical' : '', secretStorage.includes('明文') ? 'criticalBox' : ''),
         item('Claude 监控', s.cloud.monitoringEnabled ? 'ON' : 'OFF', s.cloud.monitoringEnabled ? 'controlled' : 'high', s.cloud.monitoringEnabled ? 'safeBox' : 'highBox')
       ].join('');
       document.getElementById('statusGrid').innerHTML = [

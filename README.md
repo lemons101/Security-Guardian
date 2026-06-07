@@ -2,7 +2,7 @@
 
 这是第 20 章《企业级数字员工的安全审计与生产治理》的实战项目。
 
-项目模拟一台已经部署在云服务器上的 OpenClaw。OpenClaw 会收集自己的运行日志、配置快照、Skill 权限、Token 用量和治理状态，然后通过 **steer one-shot** 调用 Claude Code 进行安全自审计。Claude Code 输出风险报告，Security Guardian 根据报告生成建议治理动作，最终生成上线前安全审计结论。
+项目面向一台已经部署在云服务器上的 OpenClaw。OpenClaw 会收集自己的运行日志、配置快照、Skill 权限、Token 用量和治理状态，然后通过 **steer one-shot** 调用 Claude Code 进行安全自审计。Claude Code 输出风险报告，Security Guardian 根据报告生成建议治理动作，最终生成上线前安全审计结论。
 
 ## 一、项目目标
 
@@ -42,7 +42,7 @@ Linux 云服务器：
 ```bash
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
-./run_dashboard.sh
+OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
 ```
 
 云服务器脚本默认监听：
@@ -131,7 +131,7 @@ openclaw_security_console/runtime/security_audit_report.md
 openclaw_security_console/runtime/security_audit_report.json
 ```
 
-当前版本为了课堂稳定性，Claude Code 输出由本地逻辑模拟。真实接入时，只需要把 `openclaw_security_console/app.py` 中的模拟审计逻辑替换成实际的 steer / Claude Code 调用即可。
+当前版本已经会在云服务器上采集真实审计证据。建议启动前设置 `OPENCLAW_ROOT` 指向真实 OpenClaw 项目目录，系统会扫描该目录下的日志、配置快照和 Skill 记录，并对疑似密钥值做脱敏。
 
 ## 六、目录说明
 
@@ -200,7 +200,7 @@ http://服务器IP:8511/dashboard.html
 
 ## 九、安全边界
 
-当前项目使用模拟日志和模拟数据。
+当前项目会读取云服务器本地的 OpenClaw 审计材料。
 
 真实接入 OpenClaw 时，请注意：
 
