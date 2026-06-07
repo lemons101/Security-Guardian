@@ -37,6 +37,16 @@ Security Guardian 展示报告并执行治理动作
 
 推荐使用和前面课程一致的 dashboard 启动脚本：
 
+Linux 云服务器：
+
+```bash
+cd /root/projects/Security-Guardian
+chmod +x run_dashboard.sh
+./run_dashboard.sh
+```
+
+Windows 本地：
+
 ```powershell
 cd "D:\Openclaw\Security Guardian"
 .\run_dashboard.cmd
