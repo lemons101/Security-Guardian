@@ -107,3 +107,58 @@ http://101.47.152.44:8511/dashboard.html
 
 如果都没有，请回复：安全边界确认通过。
 ```
+
+## 第 6 步：执行 Security Guardian 审计流程
+
+```text
+请在服务启动后执行 Security Guardian 审计流程。
+
+有两种执行方式：
+
+方式 A：通过页面手动执行
+
+打开：
+
+http://101.47.152.44:8511/dashboard.html
+
+然后按页面按钮顺序执行：
+
+1. 分析云端日志
+2. 启用监控告警
+3. 封堵控制台
+4. 隔离 Skill
+5. 密钥轮换
+6. denyList / 熔断
+7. 最终越权审计
+
+方式 B：由云端 OpenClaw 通过本机 HTTP 接口调度
+
+请在云服务器上依次执行：
+
+curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
+curl -X POST http://127.0.0.1:8511/claude-code/enable-monitoring
+curl -X POST http://127.0.0.1:8511/guardian/seal-control-plane
+curl -X POST http://127.0.0.1:8511/guardian/isolate-skill
+curl -X POST http://127.0.0.1:8511/guardian/rotate-secrets
+curl -X POST http://127.0.0.1:8511/guardian/apply-governance
+curl -X POST http://127.0.0.1:8511/guardian/final-audit
+
+执行后，请检查页面：
+
+http://101.47.152.44:8511/dashboard.html
+
+确认是否出现：
+
+1. Claude Code 云端日志审计报告
+2. Claude Code 监控告警
+3. Security Guardian 治理记录
+4. 最终越权审计结果
+5. 上线结论
+
+最后请输出：
+
+1. 审计包是否生成
+2. 审计报告是否生成
+3. 最终越权审计是否通过
+4. 当前是否允许 OpenClaw 进入受控上线
+```
