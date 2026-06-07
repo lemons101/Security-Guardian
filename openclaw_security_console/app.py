@@ -21,23 +21,23 @@ def now():
 
 def initial_state():
     return {
-        "atlas": {
-            "name": "Atlas",
+        "openclaw": {
+            "name": "OpenClaw",
             "mode": "training-lab",
             "modelTokensUsed": 0,
         },
         "controlPlane": {
             "requireAuth": False,
             "checkOrigin": False,
-            "allowedOrigins": ["https://atlas-console.local", "http://localhost:3000"],
+            "allowedOrigins": ["https://openclaw-console.local", "http://localhost:3000"],
             "sessionTtlSeconds": 86400,
             "allowRemoteDisableSafety": True,
         },
         "credentials": {
-            "oldAccessToken": "atlas-old-token-leaked",
-            "activeAccessToken": "atlas-old-token-leaked",
+            "oldAccessToken": "openclaw-old-token-leaked",
+            "activeAccessToken": "openclaw-old-token-leaked",
             "oldTokenRevoked": False,
-            "businessApiKey": "fin_test_atlas_demo_only_123456",
+            "businessApiKey": "fin_test_openclaw_demo_only_123456",
             "businessApiKeyRotated": False,
             "shortLivedTokenIssued": False,
         },
@@ -126,7 +126,7 @@ def initial_state():
                     "time": "2026-06-07 08:14:01",
                     "source": "openclaw-control",
                     "level": "critical",
-                    "message": "Access token observed in websocket query string: token=atlas-old-token-leaked",
+                    "message": "Access token observed in websocket query string: token=openclaw-old-token-leaked",
                 },
                 {
                     "time": "2026-06-07 08:18:45",
@@ -375,13 +375,13 @@ def command_allowed(state, command):
 def consume_model_tokens(state, amount):
     budget = state["governance"]["tokenBudget"]
     if not budget["enabled"]:
-        state["atlas"]["modelTokensUsed"] += amount
+        state["openclaw"]["modelTokensUsed"] += amount
         return True, "token budget disabled"
     if amount > budget["taskLimit"]:
         return False, "task token budget exceeded"
-    if state["atlas"]["modelTokensUsed"] + amount > budget["dailyLimit"]:
+    if state["openclaw"]["modelTokensUsed"] + amount > budget["dailyLimit"]:
         return False, "daily token budget exceeded"
-    state["atlas"]["modelTokensUsed"] += amount
+    state["openclaw"]["modelTokensUsed"] += amount
     return True, "allowed"
 
 
@@ -472,7 +472,7 @@ def run_reconcile_skill(state):
 
 def guardian_scan(state):
     lines = [
-        "Claude 审查对象：OpenClaw Runtime / digitalWorker=Atlas",
+        "Claude 审查对象：OpenClaw Runtime",
         "OC-001 高危｜位置：controlPlane.websocket.requireAuth｜问题：控制台未启用强鉴权" if not state["controlPlane"]["requireAuth"] else "OC-001 已修复｜controlPlane.websocket.requireAuth=true",
         "OC-002 高危｜位置：controlPlane.websocket.checkOrigin｜问题：WebSocket 未校验 Origin" if not state["controlPlane"]["checkOrigin"] else "OC-002 已修复｜controlPlane.websocket.checkOrigin=true",
         "OC-003 高危｜位置：controlPlane.websocket.allowRemoteDisableSafety｜问题：允许远程关闭安全策略" if state["controlPlane"]["allowRemoteDisableSafety"] else "OC-003 已修复｜远程关闭安全策略已禁止",
@@ -504,7 +504,7 @@ def claude_code_analyze_cloud(state):
             "id": "CC-002",
             "severity": "critical",
             "location": "openclaw-control logs",
-            "evidence": "Access token observed in websocket query string: token=atlas-old-token-leaked",
+            "evidence": "Access token observed in websocket query string: token=openclaw-old-token-leaked",
             "risk": "Token 出现在 URL 查询串中，可能被代理日志、浏览器历史或监控系统记录。",
             "recommendation": "立即吊销旧 Token，改用短期 Bearer Token，并禁止 URL 携带凭证。",
         },
@@ -672,7 +672,7 @@ def guardian_rotate_credentials(state):
     state["credentials"].update(
         {
             "oldTokenRevoked": True,
-            "activeAccessToken": "atlas-short-token-rotated",
+            "activeAccessToken": "openclaw-short-token-rotated",
             "businessApiKey": "fin_rotated_short_lived_demo_7890",
             "businessApiKeyRotated": True,
             "shortLivedTokenIssued": True,
@@ -696,7 +696,7 @@ def guardian_rotate_credentials(state):
             "新短期 Token：已签发",
             "API 强鉴权：已启用",
             "敏感操作：需要二次确认",
-            "演示用新 Token：atlas-short-token-rotated",
+            "演示用新 Token：openclaw-short-token-rotated",
         ],
     )
 
@@ -771,7 +771,7 @@ def guardian_final_audit(state):
     allowed, reason = command_allowed(state, "disable_safety")
     test("关闭安全策略应被阻断", not allowed, reason)
 
-    fake_headers = {"Origin": "https://atlas-console.local", "Authorization": "Bearer atlas-old-token-leaked"}
+    fake_headers = {"Origin": "https://openclaw-console.local", "Authorization": "Bearer openclaw-old-token-leaked"}
     allowed, reason = control_plane_allowed(state, fake_headers)
     test("旧 token 调用应被阻断", not allowed, reason)
 
@@ -789,7 +789,7 @@ def guardian_final_audit(state):
         "tests": tests,
         "releaseConclusion": "允许进入受控上线" if passed == len(tests) else "暂缓上线",
     }
-    add_event(state, "guardian_final_audit", "Atlas", passed == len(tests), "high")
+    add_event(state, "guardian_final_audit", "OpenClaw", passed == len(tests), "high")
     lines = [f"越权审计：{passed}/{len(tests)} 通过"]
     lines.extend([f"{'通过' if t['passed'] else '失败'}：{t['name']} ({t['detail']})" for t in tests])
     lines.append(f"上线结论：{state['finalAudit']['releaseConclusion']}")
@@ -1047,7 +1047,7 @@ def page_html():
       <section>
         <h2>实验角色</h2>
         <div class="roles">
-          <div class="role"><b>云端 OpenClaw / Atlas</b><span>部署在云服务器上的数字员工运行时。初始日志里已经出现控制面、Skill、Token 和出站异常。</span></div>
+          <div class="role"><b>云端 OpenClaw</b><span>部署在云服务器上的数字员工运行时。初始日志里已经出现控制面、Skill、Token 和出站异常。</span></div>
           <div class="role"><b>Claude Code</b><span>读取 OpenClaw 日志与配置快照，输出风险编号、位置、证据、影响和修复建议。</span></div>
           <div class="role"><b>Security Guardian</b><span>自动治理执行器。根据 Claude 审计结论执行封堵、隔离、轮换和熔断。</span></div>
           <div class="role"><b>审计报告</b><span>最终交付物。用于判断 OpenClaw 是否允许进入受控无人值守运行。</span></div>
@@ -1068,7 +1068,7 @@ OpenClaw Skill 行为日志</div>
         <div class="grid" id="cloudStatusGrid"></div>
       </section>
       <section>
-        <h2>Atlas 状态总览</h2>
+        <h2>OpenClaw 治理状态总览</h2>
         <div class="grid" id="statusGrid"></div>
       </section>
       <section>
@@ -1159,7 +1159,7 @@ OpenClaw Skill 行为日志</div>
       if (!p.isolate) return ['isolate', '下一步点“隔离 Skill”：把 reconcile-plus 关进最小权限沙盒。'];
       if (!p.rotate) return ['rotate', '下一步点“密钥轮换”：吊销旧 Token，签发短期凭证。'];
       if (!p.govern) return ['govern', '下一步点“denyList / 熔断”：拦截危险命令并限制 Token 消耗。'];
-      if (!p.audit) return ['audit', '最后点“最终越权审计”：验证 Atlas 是否可以受控上线。'];
+      if (!p.audit) return ['audit', '最后点“最终越权审计”：验证 OpenClaw 是否可以受控上线。'];
       return ['done', '治理完成。现在查看最终越权审计和 Claude Code 报告，判断是否允许受控上线。'];
     }
     function renderJourney(s) {
@@ -1258,7 +1258,7 @@ OpenClaw Skill 行为日志</div>
 </html>"""
 
 
-class AtlasHandler(BaseHTTPRequestHandler):
+class OpenClawHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
@@ -1385,7 +1385,7 @@ class AtlasHandler(BaseHTTPRequestHandler):
                 save_state(state)
                 self.send_json({"allowed": False, "reason": token_reason})
                 return
-            output = "atlas-agent" if command == "whoami" else f"simulated execution: {html.escape(command)}"
+            output = "openclaw-agent" if command == "whoami" else f"simulated execution: {html.escape(command)}"
             add_event(state, "run_command", command, True, "high" if "curl" in command else "medium")
             save_state(state)
             self.send_json({"allowed": True, "reason": "allowed", "output": output})
@@ -1401,11 +1401,11 @@ class AtlasHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    host = os.getenv("ATLAS_HOST", "0.0.0.0")
-    port = int(os.getenv("ATLAS_PORT", "3000"))
+    host = os.getenv("GUARDIAN_HOST", "0.0.0.0")
+    port = int(os.getenv("GUARDIAN_PORT", "3000"))
     load_state()
-    server = ThreadingHTTPServer((host, port), AtlasHandler)
-    print(f"Atlas lab running at http://{host}:{port}", flush=True)
+    server = ThreadingHTTPServer((host, port), OpenClawHandler)
+    print(f"OpenClaw Security Console running at http://{host}:{port}", flush=True)
     server.serve_forever()
 
 

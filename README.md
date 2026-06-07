@@ -1,4 +1,4 @@
-# OpenClaw Claude Code 安全自审计服务
+﻿# OpenClaw Claude Code 安全自审计服务
 
 这是第 20 章《企业级数字员工的安全审计与生产治理》的实战项目。
 
@@ -126,12 +126,12 @@ steer one-shot
 点击 **分析云端日志** 后，会生成：
 
 ```text
-atlas_lab/runtime/security_audit_bundle.json
-atlas_lab/runtime/security_audit_report.md
-atlas_lab/runtime/security_audit_report.json
+openclaw_security_console/runtime/security_audit_bundle.json
+openclaw_security_console/runtime/security_audit_report.md
+openclaw_security_console/runtime/security_audit_report.json
 ```
 
-当前版本为了课堂稳定性，Claude Code 输出由本地逻辑模拟。真实接入时，只需要把 `atlas_lab/app.py` 中的模拟审计逻辑替换成实际的 steer / Claude Code 调用即可。
+当前版本为了课堂稳定性，Claude Code 输出由本地逻辑模拟。真实接入时，只需要把 `openclaw_security_console/app.py` 中的模拟审计逻辑替换成实际的 steer / Claude Code 调用即可。
 
 ## 六、目录说明
 
@@ -141,7 +141,7 @@ Security Guardian/
 ├── run_dashboard.cmd
 ├── run-conda-env1.bat
 ├── run-local.bat
-├── atlas_lab/
+├── openclaw_security_console/
 │   ├── app.py
 │   ├── data/
 │   └── skills/

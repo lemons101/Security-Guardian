@@ -1,7 +1,7 @@
-openclaw:
+﻿openclaw:
   部署环境: 云服务器
   运行时: OpenClaw + Claude Code
-  数字员工: Atlas
+  数字员工: OpenClaw
 
 控制面:
   websocket:

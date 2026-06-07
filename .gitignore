@@ -6,8 +6,8 @@ __pycache__/
 .env.*
 !.env.example
 
-atlas_lab/state/
-atlas_lab/runtime/
+openclaw_security_console/state/
+openclaw_security_console/runtime/
 
 .venv/
 venv/

@@ -1,23 +1,23 @@
 @echo off
 cd /d "%~dp0"
 
-set ATLAS_HOST=127.0.0.1
-set ATLAS_PORT=8511
+set GUARDIAN_HOST=127.0.0.1
+set GUARDIAN_PORT=8511
 
 if exist "F:\Anaconda\Scripts\conda.exe" (
-  F:\Anaconda\Scripts\conda.exe run -n env1 python -B -u atlas_lab\app.py
+  F:\Anaconda\Scripts\conda.exe run -n env1 python -B -u openclaw_security_console\app.py
   exit /b %ERRORLEVEL%
 )
 
 where conda >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
-  conda run -n env1 python -B -u atlas_lab\app.py
+  conda run -n env1 python -B -u openclaw_security_console\app.py
   exit /b %ERRORLEVEL%
 )
 
 where python >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
-  python -B -u atlas_lab\app.py
+  python -B -u openclaw_security_console\app.py
   exit /b %ERRORLEVEL%
 )
 

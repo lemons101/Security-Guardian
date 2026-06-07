@@ -5,11 +5,11 @@ where python >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
   echo Checking python...
   python --version
-  echo Starting Atlas Lab with python...
-  python -u atlas_lab\app.py
+  echo Starting OpenClaw Security Console with python...
+  python -u openclaw_security_console\app.py
   echo.
-  echo Atlas Lab exited with code %ERRORLEVEL%.
-  echo If it exited immediately, try: py -3 atlas_lab\app.py
+  echo OpenClaw Security Console exited with code %ERRORLEVEL%.
+  echo If it exited immediately, try: py -3 openclaw_security_console\app.py
   pause
   exit /b %ERRORLEVEL%
 )
@@ -18,10 +18,10 @@ where py >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
   echo Checking py launcher...
   py -3 --version
-  echo Starting Atlas Lab with py -3...
-  py -3 -u atlas_lab\app.py
+  echo Starting OpenClaw Security Console with py -3...
+  py -3 -u openclaw_security_console\app.py
   echo.
-  echo Atlas Lab exited with code %ERRORLEVEL%.
+  echo OpenClaw Security Console exited with code %ERRORLEVEL%.
   pause
   exit /b %ERRORLEVEL%
 )
