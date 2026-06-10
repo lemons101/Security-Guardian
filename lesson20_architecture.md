@@ -16,26 +16,7 @@
 
 ## 2. 架构分层
 
-```text
-OpenClaw Runtime
-  提供真实日志、配置、Skill 记录、Token 用量、工具调用证据
-        |
-        v
-Security Guardian Evidence Layer
-  只读采集、脱敏、打包审计材料
-        |
-        v
-Claude Code Audit Layer
-  基于审计包做一次性安全判断，输出结构化报告
-        |
-        v
-Security Guardian Console
-  展示风险、建议、告警规则和最终复检结论
-        |
-        v
-Human / Ops / OpenClaw Executor
-  根据建议真正修改生产配置，并重新复检
-```
+![OpenClaw 安全审计与复检架构图](assets/openclaw-audit-architecture.png)
 
 这套架构刻意把“检测”和“治理”分开：
 

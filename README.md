@@ -4,28 +4,11 @@
 
 Security Guardian 是一个面向云端 OpenClaw 的安全自审计控制台。它不做攻击演示，也不是一键修复器，而是把 OpenClaw 的真实日志、配置和运行证据交给 Claude Code 审查，再把结果整理成风险报告、告警建议、治理建议和最终复检结论。
 
-## 项目架构
+## 架构摘要
 
-```text
-Cloud OpenClaw
-  真实日志 / 配置快照 / Skill 记录 / Token 用量 / 工具调用证据
-        |
-        v
-Security Guardian
-  只读扫描 OPENCLAW_ROOT 和额外审计目录，脱敏疑似密钥，生成审计包
-        |
-        v
-Claude Code CLI
-  以 steer one-shot 方式审查审计包，返回结构化 JSON 风险报告
-        |
-        v
-Security Guardian Dashboard
-  展示风险发现、告警规则建议、治理建议和最终复检结论
-        |
-        v
-Human / Ops / OpenClaw Executor
-  根据建议真正修改生产配置，并用复核证据闭环
-```
+Security Guardian 位于 OpenClaw 和 Claude Code 之间：它只读采集 OpenClaw 的真实运行证据，脱敏后打包成审计材料，再调用 Claude Code 做一次性安全判断。页面只展示风险、告警规则、治理建议和复检结论；真正的生产配置变更仍由人工、运维或 OpenClaw 执行官完成。
+
+完整架构图见 [`lesson20_architecture.md`](lesson20_architecture.md)。
 
 ## 角色分工
 
