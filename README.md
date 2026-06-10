@@ -144,5 +144,5 @@ OPENCLAW_ROOT
 ## 配套文档
 
 - `lesson20-lab.md`：课堂实验手册，给学员按步骤执行。
-- `课程Framework设计说明.md`：课程 framework、系统逻辑和设计边界。
+- `lesson20_architecture.md`：课程 framework、系统逻辑和设计边界。
 - `checklists/OpenClaw生产上线安全核查表.md`：上线前人工复核清单。
