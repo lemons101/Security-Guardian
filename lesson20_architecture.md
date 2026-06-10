@@ -272,6 +272,16 @@ OPENCLAW_AUDIT_PATHS=/root/.openclaw/logs;/tmp/openclaw
 *token*
 ```
 
+为避免 session、cron 和运行日志过多导致 Claude Code 无法处理，采集层默认不做全量递归扫描，而是采用“高价值路径 + 最新文件 + 数量限额”的策略：
+
+| 配置 | 默认值 | 含义 |
+|---|---:|---|
+| `OPENCLAW_MAX_AUDIT_FILES` | `30` | 单次审计最多纳入的文件数 |
+| `OPENCLAW_MAX_FILES_PER_ROOT` | `6` | 每个审计目录最多纳入的文件数 |
+| `OPENCLAW_MAX_FILE_BYTES` | `20000` | 单个文件最多读取的字节数 |
+
+这样审计包能覆盖关键证据，同时避免把全部历史会话和运行日志塞给 Claude Code。
+
 审计包示例：
 
 ```json

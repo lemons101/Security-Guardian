@@ -267,6 +267,7 @@ openclaw_security_console/runtime/security_audit_report.json
 | Claude 调用失败 | 命令不匹配 | 「请设置正确的 `CLAUDE_CODE_COMMAND`」 |
 | `OPENCLAW_ROOT` 待检测 | 路径没设置或设置错 | 「请重新定位真实 OpenClaw 目录」 |
 | 扫描文件数为 0 | 指到了空目录或日志不在范围内 | 「请列出 OPENCLAW_ROOT 下的日志和配置文件」 |
+| 扫描文件太多或 Claude 处理失败 | 审计目录过宽、历史 session 太多 | 「请调低 OPENCLAW_MAX_AUDIT_FILES 和 OPENCLAW_MAX_FILES_PER_ROOT，并缩窄 OPENCLAW_AUDIT_PATHS」 |
 | 页面打不开 | 8511 未监听或安全组未放行 | 「请检查 8511 监听和云安全组」 |
 | 页面有建议但没修复 | 正常，本项目只生成建议 | 「请不要声称已治理，除非真实修改并复核」 |
 

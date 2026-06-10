@@ -165,15 +165,34 @@ def split_env_paths(value):
     return [Path(item.strip()) for item in parts if item.strip()]
 
 
+def env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 def default_audit_roots(root):
     roots = []
     if root:
-        roots.append(root)
+        if root.name == ".openclaw":
+            roots.extend(
+                [
+                    root / "openclaw.json",
+                    root / "logs",
+                    root / "cron" / "runs",
+                    root / "agents",
+                    root / "extensions",
+                    root / "workspace" / "skills",
+                ]
+            )
+        else:
+            roots.append(root)
     roots.extend(split_env_paths(os.getenv("OPENCLAW_AUDIT_PATHS", "")))
 
     defaults = [
         Path("/root/.openclaw/logs"),
-        Path("/root/.openclaw/cron"),
+        Path("/root/.openclaw/cron/runs"),
         Path("/root/.openclaw/agents"),
         Path("/root/.openclaw/extensions"),
         Path("/root/.openclaw/workspace/skills"),
@@ -191,7 +210,7 @@ def default_audit_roots(root):
             path = item.expanduser().resolve()
         except Exception:
             continue
-        if not path.exists() or not path.is_dir():
+        if not path.exists() or not (path.is_dir() or path.is_file()):
             continue
         if str(path) in seen:
             continue
@@ -258,7 +277,9 @@ def collect_open_ports():
     return sorted(result, key=lambda x: x["port"])
 
 
-def safe_read_text(path, max_bytes=200_000):
+def safe_read_text(path, max_bytes=None):
+    if max_bytes is None:
+        max_bytes = env_int("OPENCLAW_MAX_FILE_BYTES", 20_000)
     try:
         with path.open("rb") as fh:
             data = fh.read(max_bytes)
@@ -267,17 +288,60 @@ def safe_read_text(path, max_bytes=200_000):
         return ""
 
 
+def sort_recent(paths):
+    def mtime(path):
+        try:
+            return path.stat().st_mtime
+        except Exception:
+            return 0
+
+    return sorted(paths, key=mtime, reverse=True)
+
+
+def candidate_files_for_target(target, allowed_suffixes):
+    if target.is_file():
+        return [target]
+
+    name = target.name.lower()
+    target_text = str(target).lower().replace("\\", "/")
+    patterns = []
+    recursive = False
+
+    if "agents" in target_text:
+        patterns = ["*/sessions/*.jsonl"]
+    elif name == "runs" or "cron" in target_text:
+        patterns = ["*.jsonl", "runs/*.jsonl"]
+    elif name in {"logs", "openclaw"} or target_text.endswith("/tmp/openclaw"):
+        patterns = ["*"]
+    elif "extensions" in target_text or "skills" in target_text:
+        patterns = ["*/openclaw.plugin.json", "*/SKILL.md", "*/_meta.json", "*/.clawhub/origin.json"]
+        recursive = True
+    else:
+        recursive = True
+
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(target.glob(pattern))
+    if recursive and not candidates:
+        candidates.extend(target.rglob("*"))
+
+    return [path for path in sort_recent(candidates) if path.is_file() and path.suffix.lower() in allowed_suffixes]
+
+
 def iter_audit_files(roots):
     if not roots:
         return []
     allowed_suffixes = {".log", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".toml", ".conf", ".md"}
     skip_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", "site-packages"}
+    max_files = env_int("OPENCLAW_MAX_AUDIT_FILES", 30)
+    max_files_per_root = env_int("OPENCLAW_MAX_FILES_PER_ROOT", 6)
     files = []
     seen = set()
     for root in roots:
         try:
-            for path in root.rglob("*"):
-                if len(files) >= 260:
+            root_count = 0
+            for path in candidate_files_for_target(root, allowed_suffixes):
+                if len(files) >= max_files or root_count >= max_files_per_root:
                     break
                 if any(part in skip_dirs for part in path.parts):
                     continue
@@ -295,6 +359,7 @@ def iter_audit_files(roots):
                     continue
                 seen.add(str(resolved))
                 files.append(path)
+                root_count += 1
         except Exception:
             continue
     return files
@@ -303,6 +368,8 @@ def iter_audit_files(roots):
 def relative_location(path, roots):
     for root in sorted(roots, key=lambda item: len(str(item)), reverse=True):
         try:
+            if root.is_file() and path.resolve() == root.resolve():
+                return root.name
             return f"{root.name}/{path.relative_to(root)}"
         except ValueError:
             continue

@@ -70,6 +70,16 @@ export OPENCLAW_AUDIT_PATHS="/root/.openclaw/logs;/tmp/openclaw"
 
 默认会跳过高敏路径和文件名，例如 `identity`、`openclaw-weixin/accounts`、`.ssh`、`.aws`、`*.pem`、`*credential*`、`*secret*`、`*token*`。
 
+为避免会话日志过多导致审计包过大，扫描默认采用限额抽样：
+
+```bash
+export OPENCLAW_MAX_AUDIT_FILES=30
+export OPENCLAW_MAX_FILES_PER_ROOT=6
+export OPENCLAW_MAX_FILE_BYTES=20000
+```
+
+默认优先读取最新的日志、session、cron run 和 Skill manifest，而不是递归扫描整个 `/root/.openclaw`。
+
 默认监听：
 
 ```text
