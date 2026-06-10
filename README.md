@@ -132,7 +132,7 @@ OPENCLAW_ROOT
 
 ## 课程结论
 
-学员最终拿到的不是“已经被一键修好的 OpenClaw”，而是：
+学员最终拿到的不是“已完成生产治理的 OpenClaw”，而是：
 
 - 一份真实证据驱动的 Claude Code 审计报告
 - 一份真实 Claude Code 调用 Prompt
@@ -140,3 +140,9 @@ OPENCLAW_ROOT
 - 一组按风险类型拆开的治理建议
 - 一个上线前复检结论
 - `checklists/OpenClaw生产上线安全核查表.md`
+
+## 配套文档
+
+- `lesson20-lab.md`：课堂实验手册，给学员按步骤执行。
+- `课程Framework设计说明.md`：课程 framework、系统逻辑和设计边界。
+- `checklists/OpenClaw生产上线安全核查表.md`：上线前人工复核清单。
