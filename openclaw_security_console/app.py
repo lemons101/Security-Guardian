@@ -45,6 +45,7 @@ def initial_state():
             "alertRulesGenerated": False,
             "logWindow": "last 24h",
             "openclawRoot": "",
+            "auditRoots": [],
             "configSnapshot": {
                 "openPorts": [],
                 "websocketBind": "未检测",
@@ -143,6 +144,7 @@ def find_openclaw_root():
         candidates.append(Path(env_root))
     candidates.extend(
         [
+            Path("/root/.openclaw"),
             Path("/root/projects/OpenClaw"),
             Path("/root/projects/openclaw"),
             Path("/root/projects/Openclaw"),
@@ -156,6 +158,64 @@ def find_openclaw_root():
                 continue
             return candidate.resolve()
     return None
+
+
+def split_env_paths(value):
+    parts = re.split(r"[;,\n]", value or "")
+    return [Path(item.strip()) for item in parts if item.strip()]
+
+
+def default_audit_roots(root):
+    roots = []
+    if root:
+        roots.append(root)
+    roots.extend(split_env_paths(os.getenv("OPENCLAW_AUDIT_PATHS", "")))
+
+    defaults = [
+        Path("/root/.openclaw/logs"),
+        Path("/root/.openclaw/cron"),
+        Path("/root/.openclaw/agents"),
+        Path("/root/.openclaw/extensions"),
+        Path("/root/.openclaw/workspace/skills"),
+        Path("/tmp/openclaw"),
+        Path("/usr/lib/node_modules/openclaw/dist/extensions"),
+        Path("/usr/lib/node_modules/openclaw/skills"),
+    ]
+    if os.getenv("OPENCLAW_INCLUDE_DEFAULT_PATHS", "1").strip().lower() not in {"0", "false", "no"}:
+        roots.extend(defaults)
+
+    resolved = []
+    seen = set()
+    for item in roots:
+        try:
+            path = item.expanduser().resolve()
+        except Exception:
+            continue
+        if not path.exists() or not path.is_dir():
+            continue
+        if str(path) in seen:
+            continue
+        seen.add(str(path))
+        resolved.append(path)
+    return resolved
+
+
+SENSITIVE_PATH_PARTS = {
+    "identity",
+    "openclaw-weixin",
+    "accounts",
+    ".ssh",
+    ".aws",
+}
+
+SENSITIVE_FILE_PATTERNS = re.compile(r"(?i)(\.pem$|id_rsa|private[_-]?key|credential|credentials|secret|token)")
+
+
+def should_skip_audit_path(path):
+    parts = {part.lower() for part in path.parts}
+    if parts & SENSITIVE_PATH_PARTS:
+        return True
+    return bool(SENSITIVE_FILE_PATTERNS.search(path.name))
 
 
 def parse_proc_net_tcp(path):
@@ -207,29 +267,46 @@ def safe_read_text(path, max_bytes=200_000):
         return ""
 
 
-def iter_audit_files(root):
-    if not root:
+def iter_audit_files(roots):
+    if not roots:
         return []
     allowed_suffixes = {".log", ".txt", ".json", ".jsonl", ".yml", ".yaml", ".toml", ".conf", ".md"}
     skip_dirs = {".git", "node_modules", ".venv", "venv", "__pycache__", "site-packages"}
     files = []
-    try:
-        for path in root.rglob("*"):
-            if len(files) >= 180:
-                break
-            if any(part in skip_dirs for part in path.parts):
-                continue
-            if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
-                continue
-            try:
-                if path.stat().st_size > 2_000_000:
+    seen = set()
+    for root in roots:
+        try:
+            for path in root.rglob("*"):
+                if len(files) >= 260:
+                    break
+                if any(part in skip_dirs for part in path.parts):
                     continue
-            except Exception:
-                continue
-            files.append(path)
-    except Exception:
-        return files
+                if should_skip_audit_path(path):
+                    continue
+                if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+                    continue
+                try:
+                    resolved = path.resolve()
+                    if str(resolved) in seen:
+                        continue
+                    if path.stat().st_size > 2_000_000:
+                        continue
+                except Exception:
+                    continue
+                seen.add(str(resolved))
+                files.append(path)
+        except Exception:
+            continue
     return files
+
+
+def relative_location(path, roots):
+    for root in sorted(roots, key=lambda item: len(str(item)), reverse=True):
+        try:
+            return f"{root.name}/{path.relative_to(root)}"
+        except ValueError:
+            continue
+    return str(path)
 
 
 def evidence_event(source, level, message):
@@ -238,6 +315,7 @@ def evidence_event(source, level, message):
 
 def collect_real_openclaw_evidence():
     root = find_openclaw_root()
+    audit_roots = default_audit_roots(root)
     ports = collect_open_ports()
     open_ports = [f"{item['bind']}:{item['port']}/tcp" for item in ports]
     logs = []
@@ -255,17 +333,17 @@ def collect_real_openclaw_evidence():
             if item["bind"] in {"0.0.0.0", "::"} and item["port"] == 7070:
                 logs.append(evidence_event("proc-net", "critical", f"OpenClaw control-plane candidate listens on {item['bind']}:{item['port']}"))
 
-    files = iter_audit_files(root) if root else []
+    files = iter_audit_files(audit_roots)
     if not root:
-        logs.append(evidence_event("auditor", "warn", "未找到 OpenClaw 根目录。请设置 OPENCLAW_ROOT 指向真实 OpenClaw 项目目录。"))
+        logs.append(evidence_event("auditor", "warn", "未找到 OpenClaw 根目录。请设置 OPENCLAW_ROOT 指向真实 OpenClaw 运行目录，例如 /root/.openclaw。"))
         findings.append(
             {
                 "id": "CC-000",
                 "severity": "high",
                 "location": "OPENCLAW_ROOT",
-                "evidence": "未配置 OPENCLAW_ROOT，且未在 /root/projects 下发现明确 OpenClaw 目录",
+                "evidence": "未配置 OPENCLAW_ROOT，且未发现明确 OpenClaw 运行目录",
                 "risk": "审计范围不明确，Claude Code 无法确认是否覆盖真实生产 OpenClaw。",
-                "recommendation": "启动 Security Guardian 前设置 OPENCLAW_ROOT=/path/to/openclaw，并重新执行审计。",
+                "recommendation": "启动 Security Guardian 前设置 OPENCLAW_ROOT=/root/.openclaw，并按需设置 OPENCLAW_AUDIT_PATHS 后重新执行审计。",
             }
         )
 
@@ -282,7 +360,7 @@ def collect_real_openclaw_evidence():
 
     seen_findings = set()
     for path in files:
-        rel = str(path.relative_to(root)) if root and str(path).startswith(str(root)) else str(path)
+        rel = relative_location(path, audit_roots)
         content = safe_read_text(path)
         if not content:
             continue
@@ -328,6 +406,7 @@ def collect_real_openclaw_evidence():
 
     return {
         "root": str(root) if root else "",
+        "audit_roots": [str(item) for item in audit_roots],
         "open_ports": open_ports,
         "websocket_bind": websocket_bind,
         "skill_sources": sorted(skill_sources),
@@ -347,6 +426,7 @@ def build_security_audit_bundle(state):
         "audit_method": state["cloud"]["auditMethod"],
         "generated_at": now(),
         "openclaw_root": state["cloud"]["openclawRoot"],
+        "audit_roots": state["cloud"].get("auditRoots", []),
         "config_snapshot": state["cloud"]["configSnapshot"],
         "logs": state["cloud"]["logs"],
         "precheck_findings": state["cloud"].get("precheckFindings", []),
@@ -680,6 +760,7 @@ def claude_code_analyze_cloud(state):
     evidence = collect_real_openclaw_evidence()
     state["workflow"]["scan"] = True
     state["cloud"]["openclawRoot"] = evidence["root"]
+    state["cloud"]["auditRoots"] = evidence["audit_roots"]
     state["cloud"]["logs"] = evidence["logs"]
     state["cloud"]["precheckFindings"] = evidence["findings"]
     state["cloud"]["configSnapshot"] = {
@@ -708,6 +789,7 @@ def claude_code_analyze_cloud(state):
         f"Claude 调用：{'成功' if state['cloud']['claudeInvocation']['ok'] else '失败'}",
         f"日志窗口：{report['logWindow']}",
         f"OpenClaw 根目录：{evidence['root'] or '未找到，请设置 OPENCLAW_ROOT'}",
+        f"审计目录数：{len(evidence['audit_roots'])}",
         f"扫描文件数：{evidence['scanned_files']}",
         f"发现数量：{len(report['findings'])}；整体风险：{report['summary']['overallRisk']}",
         f"审计包：{state['cloud']['auditArtifacts']['bundle']}",
@@ -1490,6 +1572,7 @@ OpenClaw 工具调用审计日志</div>
       const openPorts = s.cloud.configSnapshot.openPorts.length ? s.cloud.configSnapshot.openPorts.join(', ') : '待检测';
       const websocketBind = s.cloud.configSnapshot.websocketBind || '待检测';
       const claudeCall = s.cloud.claudeInvocation && s.cloud.claudeInvocation.ok ? '成功' : report ? '失败' : '待调用';
+      const auditRoots = s.cloud.auditRoots && s.cloud.auditRoots.length ? s.cloud.auditRoots.join('\\n') : '待检测';
       document.getElementById('cloudStatusGrid').innerHTML = [
         item('云服务器', s.cloud.server, '', 'safeBox'),
         item('运行时', runtime, '', 'safeBox'),
@@ -1497,6 +1580,7 @@ OpenClaw 工具调用审计日志</div>
         item('Claude 调用', claudeCall, claudeCall === '成功' ? 'controlled' : 'high', claudeCall === '成功' ? 'safeBox' : 'highBox'),
         item('日志窗口', logWindow, '', 'safeBox'),
         item('OpenClaw 根目录', s.cloud.openclawRoot || '待检测', s.cloud.openclawRoot ? 'controlled' : 'high', s.cloud.openclawRoot ? 'safeBox' : 'highBox'),
+        item('审计目录', auditRoots, s.cloud.auditRoots && s.cloud.auditRoots.length ? 'controlled' : 'high', s.cloud.auditRoots && s.cloud.auditRoots.length ? 'safeBox' : 'highBox'),
         item('开放端口', openPorts, s.cloud.configSnapshot.openPorts.length ? 'high' : '', s.cloud.configSnapshot.openPorts.length ? 'highBox' : ''),
         item('WebSocket 绑定', websocketBind, websocketBind !== '未检测' && websocketBind !== '待检测' ? 'critical' : '', websocketBind !== '未检测' && websocketBind !== '待检测' ? 'criticalBox' : ''),
         item('Skill 来源', skillSources || '待检测', skillSources ? 'high' : '', skillSources ? 'highBox' : ''),

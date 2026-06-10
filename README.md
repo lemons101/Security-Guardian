@@ -2,37 +2,90 @@
 
 第 20 章《企业级数字员工的安全审计与生产治理》实战项目。
 
-这个项目不是攻击靶场，也不是一键修复器。它面向已经部署在云服务器上的 OpenClaw，做三件事：
+Security Guardian 是一个面向云端 OpenClaw 的安全自审计控制台。它不做攻击演示，也不是一键修复器，而是把 OpenClaw 的真实日志、配置和运行证据交给 Claude Code 审查，再把结果整理成风险报告、告警建议、治理建议和最终复检结论。
 
-1. 读取真实 OpenClaw 日志、配置快照和运行证据。
-2. 调用 Claude Code CLI 生成安全审计报告，指出风险位置、证据、影响和建议。
-3. 在页面中展示风险发现、告警规则建议、治理建议和最终复检结论。
+## 项目架构
 
-Security Guardian **不会自动修改 OpenClaw 生产配置**，也不会读取或展示真实密钥明文。所有疑似密钥字段会脱敏。
+```text
+Cloud OpenClaw
+  真实日志 / 配置快照 / Skill 记录 / Token 用量 / 工具调用证据
+        |
+        v
+Security Guardian
+  只读扫描 OPENCLAW_ROOT 和额外审计目录，脱敏疑似密钥，生成审计包
+        |
+        v
+Claude Code CLI
+  以 steer one-shot 方式审查审计包，返回结构化 JSON 风险报告
+        |
+        v
+Security Guardian Dashboard
+  展示风险发现、告警规则建议、治理建议和最终复检结论
+        |
+        v
+Human / Ops / OpenClaw Executor
+  根据建议真正修改生产配置，并用复核证据闭环
+```
 
-## 启动
+## 角色分工
+
+| 模块 | 负责什么 | 不负责什么 |
+|---|---|---|
+| OpenClaw | 提供真实审计材料，触发检测流程 | 不把生产权限直接交给 Claude |
+| Security Guardian | 采集证据、脱敏、调用 Claude、展示报告 | 不自动修改生产配置 |
+| Claude Code | 基于审计包判断风险、输出建议 | 不读取真实密钥，不执行修复命令 |
+| 人工 / 运维 | 根据建议执行真实治理并复核 | 不把“建议已生成”当成“已治理” |
+
+## 审计内容
+
+Security Guardian + Claude Code 重点检查：
+
+- 控制面安全：公网监听、弱鉴权、Origin 校验、远程关闭安全策略
+- Skill 供应链：社区来源、签名校验、敏感路径访问、网络出站
+- 密钥与 Token：日志泄露、明文配置、旧 Token、轮换线索
+- 工具调用：危险命令、敏感文件读取、denyList 缺失
+- 网络出站：未知域名、webhook、POST 外传行为
+- Token 熔断：单任务预算、每日预算、异常暴涨
+- 审计追踪：工具调用日志、拒绝动作日志、审批记录
+
+## 运行方式
 
 前置要求：
 
-- 云服务器已安装并登录 Claude Code CLI。
-- 默认调用命令为 `claude -p <prompt>`。
-- 如果你的 Claude Code 调用方式不同，可以设置 `CLAUDE_CODE_COMMAND`。
+- 云服务器已部署 OpenClaw
+- 云服务器已安装并登录 Claude Code CLI
+- `claude -p "请只回复 ok"` 可以正常返回
 
-例如：
-
-```bash
-export CLAUDE_CODE_COMMAND="claude -p"
-```
-
-云服务器推荐路径：
+启动：
 
 ```bash
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
-OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
+OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
 ```
 
-如果真实 OpenClaw 不在 `/root/projects/OpenClaw`，把 `OPENCLAW_ROOT` 改成实际目录。
+当前云端 OpenClaw 的运行根目录通常是 `/root/.openclaw`。如果你的实际目录不同，请把 `OPENCLAW_ROOT` 改成真实运行目录。
+
+Security Guardian 默认还会尝试只读扫描这些高价值审计目录：
+
+```text
+/root/.openclaw/logs
+/root/.openclaw/cron
+/root/.openclaw/agents
+/root/.openclaw/extensions
+/root/.openclaw/workspace/skills
+/tmp/openclaw
+/usr/lib/node_modules/openclaw/dist/extensions
+/usr/lib/node_modules/openclaw/skills
+```
+
+如需额外指定目录，可以设置：
+
+```bash
+export OPENCLAW_AUDIT_PATHS="/root/.openclaw/logs;/tmp/openclaw"
+```
+
+默认会跳过高敏路径和文件名，例如 `identity`、`openclaw-weixin/accounts`、`.ssh`、`.aws`、`*.pem`、`*credential*`、`*secret*`、`*token*`。
 
 默认监听：
 
@@ -40,51 +93,26 @@ OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
 0.0.0.0:8511
 ```
 
-公网访问：
+访问：
 
 ```text
 http://101.47.152.44:8511/dashboard.html
 ```
 
-Windows 本地：
+如果 Claude Code 调用方式不是默认的 `claude -p <prompt>`，可以设置：
 
-```powershell
-cd "D:\Openclaw\Security Guardian"
-.\run_dashboard.cmd
-```
-
-本地访问：
-
-```text
-http://127.0.0.1:8511/dashboard.html
+```bash
+export CLAUDE_CODE_COMMAND="claude -p"
 ```
 
 ## 页面流程
 
-1. **执行真实检测**  
-   扫描 `OPENCLAW_ROOT` 下的日志、配置、Skill 记录和审计材料，生成 `security_audit_bundle.json`、Markdown 报告和 JSON 报告。
-
-2. **生成告警规则**  
-   根据真实风险发现生成告警规则建议。这里不是说监控系统已经被改好，而是输出可落地的规则清单。
-
-3. **控制面建议**  
-   如果检测到公网监听、弱鉴权或 WebSocket 风险，输出控制面收敛建议和需要复核的证据。
-
-4. **Skill 建议**  
-   如果检测到未签名 Skill、敏感路径访问或可疑出站，输出最小权限、签名校验和出站白名单建议。
-
-5. **密钥建议**  
-   如果检测到 Token、API Key 或 Authorization 进入日志，输出吊销、轮换、短期凭证和日志脱敏建议。
-
-6. **治理策略建议**  
-   输出 denyList、Token 熔断、审计日志和人工审批建议。
-
-7. **最终复检**  
-   根据扫描覆盖范围和风险发现数量给出上线前判断。存在 high / critical 风险时，结论会是暂缓上线。
+1. 执行真实检测：扫描 `OPENCLAW_ROOT`，生成审计包，并调用 Claude Code。
+2. 生成告警规则：把 high / critical 风险整理成告警建议。
+3. 生成治理建议：输出控制面、Skill、密钥、denyList、Token 熔断等建议。
+4. 最终复检：根据 Claude 调用状态、扫描覆盖范围和风险等级给出上线前判断。
 
 ## 生成文件
-
-执行真实检测后会生成：
 
 ```text
 openclaw_security_console/runtime/security_audit_bundle.json
@@ -93,56 +121,16 @@ openclaw_security_console/runtime/security_audit_report.md
 openclaw_security_console/runtime/security_audit_report.json
 ```
 
-## 检测范围
-
-程序会优先使用：
-
-```text
-OPENCLAW_ROOT
-```
-
-如果未设置，会尝试查找：
-
-```text
-/root/projects/OpenClaw
-/root/projects/openclaw
-/root/projects/Openclaw
-/root/projects
-```
-
-扫描文件类型包括：
-
-```text
-.log .txt .json .jsonl .yml .yaml .toml .conf .md
-```
-
-会跳过：
-
-```text
-.git node_modules .venv venv __pycache__ site-packages
-```
-
 ## 安全边界
 
-- 只做只读检测和报告生成。
-- 不自动修改 OpenClaw 配置。
-- 不读取真实 SSH 私钥内容作为报告正文。
-- 不展示真实 API Key / Token 明文。
+- 只读检测，不主动修改 OpenClaw 生产配置。
+- 疑似密钥字段会脱敏，不展示真实密钥明文。
+- Claude Code 调用失败时会显示 `CC-CALL-FAILED`，不会伪造成功。
+- 页面中的“建议已生成”不等于“生产已治理”。
 - 审计页面不建议长期裸露公网，生产环境请加 IP 白名单、Basic Auth、VPN 或企业 SSO。
-
-## 课程结论
-
-学员最终拿到的不是“已完成生产治理的 OpenClaw”，而是：
-
-- 一份真实证据驱动的 Claude Code 审计报告
-- 一份真实 Claude Code 调用 Prompt
-- 一组可转成工单的告警规则建议
-- 一组按风险类型拆开的治理建议
-- 一个上线前复检结论
-- `checklists/OpenClaw生产上线安全核查表.md`
 
 ## 配套文档
 
 - `lesson20-lab.md`：课堂实验手册，给学员按步骤执行。
-- `lesson20_architecture.md`：课程 framework、系统逻辑和设计边界。
+- `lesson20_architecture.md`：课程架构、系统逻辑和安全检查面。
 - `checklists/OpenClaw生产上线安全核查表.md`：上线前人工复核清单。

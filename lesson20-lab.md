@@ -13,7 +13,7 @@
 |---|---|---|
 | 1 | 云端 OpenClaw / 龙虾 | 能执行部署和本机 `curl` |
 | 2 | Claude Code CLI | `claude -p "请只回复 ok"` 能返回 |
-| 3 | OpenClaw 真实目录 | 推荐 `/root/projects/OpenClaw` |
+| 3 | OpenClaw 真实目录 | 推荐 `/root/.openclaw` |
 | 4 | Security Guardian 仓库 | `https://github.com/lemons101/Security-Guardian.git` |
 | 5 | 访问端口 | 固定 `8511` |
 
@@ -94,6 +94,7 @@ export CLAUDE_CODE_COMMAND="你的 Claude Code 一次性调用命令"
 请定位真实 OpenClaw 项目目录。
 
 优先检查：
+/root/.openclaw
 /root/projects/OpenClaw
 /root/projects/openclaw
 /root/projects/Openclaw
@@ -101,7 +102,8 @@ export CLAUDE_CODE_COMMAND="你的 Claude Code 一次性调用命令"
 要求：
 1. 不要把 /root/projects/Security-Guardian 当成 OpenClaw
 2. 找到后告诉我 OPENCLAW_ROOT 应该设置为什么
-3. 如果找不到，请停止并说明原因
+3. 同时确认 /tmp/openclaw 是否存在运行日志
+4. 如果找不到，请停止并说明原因
 ```
 
 ---
@@ -116,7 +118,7 @@ export CLAUDE_CODE_COMMAND="你的 Claude Code 一次性调用命令"
 执行：
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
-OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
+OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
 
 要求：
 1. 服务监听 0.0.0.0:8511
@@ -127,7 +129,8 @@ OPENCLAW_ROOT=/root/projects/OpenClaw ./run_dashboard.sh
 1. 服务是否启动成功
 2. 是否监听 0.0.0.0:8511
 3. OPENCLAW_ROOT 实际值
-4. 页面链接是否为 http://101.47.152.44:8511/dashboard.html
+4. 是否自动纳入 /tmp/openclaw 等额外审计目录
+5. 页面链接是否为 http://101.47.152.44:8511/dashboard.html
 ```
 
 ---

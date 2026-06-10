@@ -256,14 +256,48 @@ Claude Code 不负责直接修复。它负责回答：
 OpenClaw 提供真实路径：
 
 ```text
-OPENCLAW_ROOT=/root/projects/OpenClaw
+OPENCLAW_ROOT=/root/.openclaw
 ```
 
-Security Guardian 在该目录下只读扫描，形成预检证据：
+Security Guardian 在该目录及额外审计目录下只读扫描，形成预检证据。当前云端 OpenClaw 的高价值目录通常包括：
+
+```text
+/root/.openclaw/logs
+/root/.openclaw/cron
+/root/.openclaw/agents
+/root/.openclaw/extensions
+/root/.openclaw/workspace/skills
+/tmp/openclaw
+/usr/lib/node_modules/openclaw/dist/extensions
+/usr/lib/node_modules/openclaw/skills
+```
+
+如需显式补充目录，可以使用：
+
+```text
+OPENCLAW_AUDIT_PATHS=/root/.openclaw/logs;/tmp/openclaw
+```
+
+默认敏感排除：
+
+```text
+/root/.openclaw/identity
+/root/.openclaw/openclaw-weixin/accounts
+*.pem
+*credential*
+*secret*
+*token*
+```
+
+审计包示例：
 
 ```json
 {
-  "openclaw_root": "/root/projects/OpenClaw",
+  "openclaw_root": "/root/.openclaw",
+  "audit_roots": [
+    "/root/.openclaw",
+    "/tmp/openclaw"
+  ],
   "config_snapshot": {},
   "logs": [],
   "precheck_findings": [],
@@ -302,7 +336,7 @@ Claude Code 返回结构化报告：
     "overallRisk": "HIGH",
     "findingCount": 3,
     "scannedFiles": 42,
-    "openclawRoot": "/root/projects/OpenClaw"
+    "openclawRoot": "/root/.openclaw"
   },
   "findings": [],
   "recommendedOrder": []
