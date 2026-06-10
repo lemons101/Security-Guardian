@@ -17,7 +17,7 @@
 ## 2. 架构分层
 
 <p align="center">
-  <img src="assets/openclaw-audit-architecture.png" alt="OpenClaw 安全审计与复检架构图" width="720">
+  <img src="assets/openclaw-audit-architecture.png" alt="OpenClaw 安全审计与复检架构图" width="550">
 </p>
 
 这套架构刻意把“检测”和“治理”分开：
