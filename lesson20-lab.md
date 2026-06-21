@@ -20,8 +20,7 @@
 > 本实验只做真实检测和建议输出，不自动修改 OpenClaw 生产配置。
 
 ---
-
-## 1. 实验链路
+## 实验链路
 
 ```text
 OpenClaw 真实日志 / 配置 / Skill 记录
@@ -38,7 +37,7 @@ OpenClaw 真实日志 / 配置 / Skill 记录
 
 ---
 
-## 2. 部署项目（发给龙虾）
+## 1. 部署项目（发给龙虾）
 
 ```text
 请帮我部署 Security Guardian。
@@ -62,7 +61,7 @@ https://github.com/lemons101/Security-Guardian.git
 
 ---
 
-## 3. 检查 Claude Code（发给龙虾）
+## 2. 检查 Claude Code（发给龙虾）
 
 ```text
 请检查 Claude Code CLI 是否可用。
@@ -87,7 +86,7 @@ export CLAUDE_CODE_COMMAND="你的 Claude Code 一次性调用命令"
 ```
 ---
 
-## 4. 启动服务（发给龙虾）
+## 3. 启动服务（发给龙虾）
 
 发送前把 `OPENCLAW_ROOT` 替换为第 4 步真实路径。
 
@@ -114,7 +113,7 @@ OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
 
 ---
 
-## 5. 执行真实检测（发给龙虾）
+## 4. 执行真实检测（发给龙虾）
 
 ```text
 请执行 Security Guardian 真实检测，并调用 Claude Code 审计。
@@ -144,7 +143,7 @@ curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
 
 ---
 
-## 6. 生成建议（发给龙虾）
+## 5. 生成建议（发给龙虾）
 
 ```text
 请按顺序生成 Security Guardian 建议。
@@ -168,7 +167,7 @@ curl -X POST http://127.0.0.1:8511/guardian/apply-governance
 
 ---
 
-## 7. 最终复检（发给龙虾）
+## 6. 最终复检（发给龙虾）
 
 ```text
 请执行最终复检。
@@ -192,7 +191,7 @@ curl -X POST http://127.0.0.1:8511/guardian/final-audit
 
 ---
 
-## 8. 查看页面
+## 7. 查看页面
 
 打开：
 
@@ -221,7 +220,7 @@ openclaw_security_console/runtime/security_audit_report.json
 
 ---
 
-## 9. 验收检查清单
+## 8. 验收检查清单
 
 - [ ] Security Guardian 已部署到 `/root/projects/Security-Guardian`
 - [ ] Claude Code CLI 可用
@@ -238,7 +237,7 @@ openclaw_security_console/runtime/security_audit_report.json
 
 ---
 
-## 10. 常见问题速查
+## 9. 常见问题速查
 
 | 现象 | 原因 | 你发什么 |
 |---|---|---|
@@ -252,7 +251,7 @@ openclaw_security_console/runtime/security_audit_report.json
 
 ---
 
-## 11. 本节课带走什么
+## 10. 本节课带走什么
 
 - 会让 OpenClaw 收集真实审计材料
 - 会让 Claude Code 生成结构化安全报告
