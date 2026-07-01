@@ -737,7 +737,7 @@ def claude_command_args(prompt):
         if "{prompt}" in configured:
             return shlex.split(configured.replace("{prompt}", shlex.quote(prompt)))
         return [*shlex.split(configured), prompt]
-    return ["claude", "-p", prompt]
+    return ["claude", "--permission-mode", "acceptEdits", "-p", prompt]
 
 
 def extract_json_object(text):
@@ -850,7 +850,7 @@ def run_claude_code_audit(state, evidence, run_dir, manifest_path, prompt_path, 
     prompt_path.write_text(prompt, encoding="utf-8")
     state["cloud"]["auditArtifacts"]["promptMd"] = safe_relative_to_root(prompt_path)
 
-    timeout = int(os.getenv("CLAUDE_CODE_TIMEOUT", "120"))
+    timeout = int(os.getenv("CLAUDE_CODE_TIMEOUT", "300"))
     args = claude_command_args(prompt)
     state["cloud"]["claudeInvocation"] = {
         "ok": False,
