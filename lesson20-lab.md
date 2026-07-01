@@ -25,7 +25,7 @@
 OpenClaw 真实日志 / 配置 / Skill 记录
   -> Security Guardian 创建本次 audit run 工作区
   -> 复制允许审计的 evidence 并生成 manifest.json
-  -> Claude Code CLI 在工作区内自行检索证据并写 report.json
+  -> Claude Code CLI 在工作区内自行检索证据并从 stdout 返回 JSON
   -> 页面展示风险、告警建议、治理建议、最终复检
 ```
 
@@ -126,7 +126,7 @@ curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
 4. 是否生成 runtime/audit_runs/<run_id>/manifest.json
 5. 是否生成 runtime/audit_runs/<run_id>/evidence/
 6. 是否生成 runtime/audit_runs/<run_id>/audit_request.md
-7. 是否生成 runtime/audit_runs/<run_id>/report.json 和 report.md
+7. Security Guardian 是否根据 Claude stdout 生成 runtime/audit_runs/<run_id>/report.json 和 report.md
 8. 是否出现 CC-CALL-FAILED
 9. 是否出现 audit already running；如果出现，说明已有检测在运行，请等待完成后重试
 
@@ -140,6 +140,15 @@ curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
 ```
 
 > 如果出现 `CC-CALL-FAILED`，先修 Claude 调用链路，不要继续解释审计结论。
+
+补充验证：不要用“写 test_report.json”判断 Claude 是否可用，因为某些 Claude Code 权限策略允许读取和回复，但不允许直接写文件。更接近本实验的验证方式是：
+
+```bash
+cd /root/projects/Security-Guardian/openclaw_security_console/runtime/audit_runs/<run_id>
+claude -p '请读取 manifest.json，只输出其中 runId，不要输出其他内容'
+```
+
+如果能输出本次 run_id，说明 Claude 可以进入工作区读取 evidence；真实检测只要求 Claude stdout 返回 JSON，报告文件由 Security Guardian 写入。
 
 ---
 
@@ -219,7 +228,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.md
 openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 ```
 
-说明：`audit_request.md` 只是短任务说明，真实证据在 `evidence/` 和 `manifest.json` 中；Claude Code 会在该 run 目录内自行检索证据。
+说明：`audit_request.md` 只是短任务说明，真实证据在 `evidence/` 和 `manifest.json` 中；Claude Code 会在该 run 目录内自行检索证据，但不需要直接写文件，`report.json` 和 `report.md` 由 Security Guardian 根据 Claude stdout 生成。
 ---
 
 ## 8. 验收检查清单
@@ -243,7 +252,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 
 | 现象 | 原因 | 你发什么 |
 |---|---|---|
-| `CC-CALL-FAILED` | Claude CLI 不可用、未写入 report.json 或返回非 JSON | 「请执行 `claude -p "请只回复 ok"` 并返回完整报错，同时检查本次 audit_runs/<run_id>/report.json」 |
+| `CC-CALL-FAILED` | Claude CLI 不可用、超时或 stdout 没有返回 JSON | 「请执行 `claude -p "请只回复 ok"`，再在 audit_runs/<run_id> 中执行 `claude -p "请读取 manifest.json，只输出其中 runId"`」 |
 | Claude 调用失败 | 命令不匹配 | 「请设置正确的 `CLAUDE_CODE_COMMAND`」 |
 | `OPENCLAW_ROOT` 待检测 | 路径没设置或设置错 | 「请重新定位真实 OpenClaw 目录」 |
 | 扫描文件数为 0 | 指到了空目录或日志不在范围内 | 「请列出 OPENCLAW_ROOT 下的日志和配置文件」 |
@@ -257,6 +266,6 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 ## 10. 本节课带走什么
 
 - 会让 OpenClaw 收集真实审计材料并生成受控 evidence 工作区
-- 会让 Claude Code 自行检索 evidence 并生成结构化安全报告
+- 会让 Claude Code 自行检索 evidence、stdout 返回 JSON，再由 Security Guardian 生成结构化安全报告
 - 会区分“建议已生成”和“生产已治理”
 - 会用证据决定是否暂缓上线

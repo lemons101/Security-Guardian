@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import json
 import os
 import re
@@ -596,14 +596,14 @@ def create_audit_run_workspace(state, evidence):
         "openclawRoot": evidence["root"],
         "auditRoots": evidence["audit_roots"],
         "allowedRoots": ["evidence"],
-        "writeTargets": ["report.json", "notes.md"],
+        "writeTargets": [],
         "denyPatterns": [".ssh", ".aws", "id_rsa", "private_key", "credentials", ".env"],
         "rules": [
             "只读取 evidence/ 下的文件和 manifest.json。",
             "不要修改 evidence/，不要执行修复动作。",
             "不要联网，不要读取本次审计工作区之外的路径。",
             "发现疑似密钥时只报告位置和脱敏片段，不输出真实密钥明文。",
-            "最终必须写入 report.json，并在 stdout 输出同一个 JSON 对象。",
+            "最终只在 stdout 输出 JSON 对象；Security Guardian 会负责写入 report.json 和 report.md。",
         ],
         "configSnapshot": state["cloud"]["configSnapshot"],
         "precheckLogs": evidence["logs"],
@@ -695,7 +695,6 @@ def write_audit_artifacts(state, report, run_dir=None):
 
 def build_claude_prompt(manifest_path, report_path):
     manifest_name = manifest_path.name
-    report_name = report_path.name
     return f"""你现在是 Claude Code，正在被 OpenClaw Security Guardian 以受控审计模式调用。
 
 当前工作目录就是本次审计 run 目录。请先读取 {manifest_name}，然后只在 manifest.allowedRoots 声明的 evidence/ 目录内查找证据。
@@ -706,7 +705,7 @@ def build_claude_prompt(manifest_path, report_path):
 3. 不要联网，不要读取本次审计工作区之外的路径，不要执行修复动作。
 4. 发现疑似密钥、Token、私钥时，只报告位置和脱敏片段，不要输出真实明文。
 5. 如果审计范围不足，请在 finding 或 recommendedOrder 中明确指出缺少什么。
-6. 必须把最终结果写入 {report_name}，并在 stdout 输出同一个 JSON 对象，不要输出 Markdown 前后缀。
+6. 不要写文件；必须只在 stdout 输出一个 JSON 对象，不要输出 Markdown 前后缀。Security Guardian 会负责写入 report.json 和 report.md。
 
 JSON 结构必须是：
 {{
@@ -846,15 +845,6 @@ def report_from_claude_failure(state, evidence, error, raw_output=""):
     }
 
 
-def load_claude_report_json(report_path, raw_output):
-    if report_path.exists():
-        try:
-            return report_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    return extract_json_object(raw_output)
-
-
 def run_claude_code_audit(state, evidence, run_dir, manifest_path, prompt_path, report_path):
     prompt = build_claude_prompt(manifest_path, report_path)
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -901,9 +891,9 @@ def run_claude_code_audit(state, evidence, run_dir, manifest_path, prompt_path, 
         state["cloud"]["claudeInvocation"]["error"] = redact_sensitive(error)
         return report_from_claude_failure(state, evidence, error, raw_output)
 
-    json_text = load_claude_report_json(report_path, raw_output)
+    json_text = extract_json_object(raw_output)
     if not json_text:
-        error = "Claude Code 已返回内容，但没有写入或输出可解析的 JSON 对象。"
+        error = "Claude Code 已返回内容，但没有输出可解析的 JSON 对象。"
         state["cloud"]["claudeInvocation"]["error"] = error
         return report_from_claude_failure(state, evidence, error, raw_output)
     try:
