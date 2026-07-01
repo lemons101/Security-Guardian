@@ -3,7 +3,9 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,6 +16,9 @@ ROOT = Path(__file__).resolve().parent
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "state.json"
 RUNTIME_DIR = ROOT / "runtime"
+RUNS_DIR = RUNTIME_DIR / "audit_runs"
+STATE_LOCK = threading.RLock()
+AUDIT_LOCK = threading.Lock()
 
 
 def now():
@@ -41,7 +46,7 @@ def initial_state():
             "server": "cloud-openclaw-prod-01",
             "publicUrl": "https://openclaw.example.internal",
             "runtime": "OpenClaw + Claude Code",
-            "auditMethod": "steer one-shot",
+            "auditMethod": "manifest-driven workspace audit",
             "alertRulesGenerated": False,
             "logWindow": "last 24h",
             "openclawRoot": "",
@@ -57,6 +62,10 @@ def initial_state():
             "logs": [],
             "claudeReport": None,
             "precheckFindings": [],
+            "auditRunning": False,
+            "auditStartedAt": "",
+            "auditFinishedAt": "",
+            "latestRunId": "",
             "claudeInvocation": {
                 "ok": False,
                 "command": "",
@@ -69,6 +78,9 @@ def initial_state():
                 "promptMd": "",
                 "reportMd": "",
                 "reportJson": "",
+                "manifest": "",
+                "evidenceDir": "",
+                "runDir": "",
             },
             "monitorAlerts": [],
         },
@@ -93,21 +105,25 @@ def normalize_state(state):
 
 
 def load_state():
-    if not STATE_FILE.exists():
-        state = initial_state()
-        save_state(state)
-        return state
-    try:
-        return normalize_state(json.loads(STATE_FILE.read_text(encoding="utf-8")))
-    except Exception:
-        state = initial_state()
-        save_state(state)
-        return state
+    with STATE_LOCK:
+        if not STATE_FILE.exists():
+            state = initial_state()
+            save_state(state)
+            return state
+        try:
+            return normalize_state(json.loads(STATE_FILE.read_text(encoding="utf-8")))
+        except Exception:
+            state = initial_state()
+            save_state(state)
+            return state
 
 
 def save_state(state):
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    with STATE_LOCK:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = STATE_FILE.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(STATE_FILE)
 
 
 def add_event(state, action, target, allowed, risk="low", detail=""):
@@ -483,6 +499,7 @@ def collect_real_openclaw_evidence():
         "logs": logs[:80],
         "findings": findings[:40],
         "scanned_files": len(files),
+        "files": [str(path) for path in files],
     }
 
 
@@ -514,11 +531,131 @@ def write_audit_bundle(state):
     state["cloud"]["auditArtifacts"]["bundle"] = str(bundle_path.relative_to(ROOT))
     return bundle_path
 
+def safe_relative_to_root(path):
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
-def write_audit_artifacts(state, report):
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    report_json_path = RUNTIME_DIR / "security_audit_report.json"
-    report_md_path = RUNTIME_DIR / "security_audit_report.md"
+
+def sanitize_evidence_part(value):
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value).strip())
+    return cleaned[:80] or "item"
+
+
+def evidence_relative_path(path, roots):
+    rel = relative_location(path, roots).replace("\\", "/")
+    parts = [sanitize_evidence_part(part) for part in rel.split("/") if part]
+    if not parts:
+        parts = [sanitize_evidence_part(path.name)]
+    return Path(*parts)
+
+
+def copy_evidence_file(source_text, evidence_dir, audit_roots):
+    try:
+        source = Path(source_text)
+        if not source.is_file() or should_skip_audit_path(source):
+            return None
+        rel_path = evidence_relative_path(source, audit_roots)
+        dest = evidence_dir / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as src, dest.open("wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        return {
+            "source": str(source),
+            "evidencePath": str(dest.relative_to(evidence_dir.parent)).replace("\\", "/"),
+            "bytes": dest.stat().st_size,
+        }
+    except Exception as exc:
+        return {
+            "source": str(source_text),
+            "error": str(exc),
+        }
+
+
+def create_audit_run_workspace(state, evidence):
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}"
+    run_dir = RUNS_DIR / run_id
+    evidence_dir = run_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    audit_roots = [Path(item) for item in evidence.get("audit_roots", [])]
+    evidence_files = []
+    for source in evidence.get("files", []):
+        copied = copy_evidence_file(source, evidence_dir, audit_roots)
+        if copied:
+            evidence_files.append(copied)
+
+    manifest = {
+        "runId": run_id,
+        "generatedAt": now(),
+        "mode": "manifest-driven workspace audit",
+        "target": state["cloud"]["server"],
+        "runtime": state["cloud"]["runtime"],
+        "openclawRoot": evidence["root"],
+        "auditRoots": evidence["audit_roots"],
+        "allowedRoots": ["evidence"],
+        "writeTargets": ["report.json", "notes.md"],
+        "denyPatterns": [".ssh", ".aws", "id_rsa", "private_key", "credentials", ".env"],
+        "rules": [
+            "只读取 evidence/ 下的文件和 manifest.json。",
+            "不要修改 evidence/，不要执行修复动作。",
+            "不要联网，不要读取本次审计工作区之外的路径。",
+            "发现疑似密钥时只报告位置和脱敏片段，不输出真实密钥明文。",
+            "最终必须写入 report.json，并在 stdout 输出同一个 JSON 对象。",
+        ],
+        "configSnapshot": state["cloud"]["configSnapshot"],
+        "precheckLogs": evidence["logs"],
+        "precheckFindings": evidence["findings"],
+        "evidenceFiles": evidence_files,
+        "expectedSchema": {
+            "summary": {
+                "overallRisk": "CRITICAL | HIGH | REVIEW | CLEAN",
+                "findingCount": 0,
+                "scannedFiles": 0,
+                "openclawRoot": "...",
+            },
+            "findings": [
+                {
+                    "id": "CC-001",
+                    "severity": "critical | high | medium | low",
+                    "location": "evidence/...",
+                    "evidence": "脱敏证据",
+                    "risk": "影响说明",
+                    "recommendation": "建议动作",
+                }
+            ],
+            "recommendedOrder": ["处置顺序 1"],
+        },
+    }
+
+    manifest_path = run_dir / "manifest.json"
+    prompt_path = run_dir / "audit_request.md"
+    report_path = run_dir / "report.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    state["cloud"]["latestRunId"] = run_id
+    state["cloud"]["auditArtifacts"] = {
+        **state["cloud"].get("auditArtifacts", {}),
+        "bundle": safe_relative_to_root(manifest_path),
+        "manifest": safe_relative_to_root(manifest_path),
+        "evidenceDir": safe_relative_to_root(evidence_dir),
+        "runDir": safe_relative_to_root(run_dir),
+        "promptMd": safe_relative_to_root(prompt_path),
+        "reportJson": safe_relative_to_root(report_path),
+    }
+    return run_dir, manifest_path, prompt_path, report_path
+
+def write_audit_artifacts(state, report, run_dir=None):
+    target_dir = run_dir or RUNTIME_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if run_dir:
+        report_json_path = target_dir / "report.json"
+        report_md_path = target_dir / "report.md"
+    else:
+        report_json_path = target_dir / "security_audit_report.json"
+        report_md_path = target_dir / "security_audit_report.md"
 
     report_json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -552,24 +689,24 @@ def write_audit_artifacts(state, report):
 
     state["cloud"]["auditArtifacts"] = {
         **state["cloud"]["auditArtifacts"],
-        "reportMd": str(report_md_path.relative_to(ROOT)),
-        "reportJson": str(report_json_path.relative_to(ROOT)),
+        "reportMd": safe_relative_to_root(report_md_path),
+        "reportJson": safe_relative_to_root(report_json_path),
     }
 
+def build_claude_prompt(manifest_path, report_path):
+    manifest_name = manifest_path.name
+    report_name = report_path.name
+    return f"""你现在是 Claude Code，正在被 OpenClaw Security Guardian 以受控审计模式调用。
 
-def build_claude_prompt(bundle_path):
-    bundle_text = bundle_path.read_text(encoding="utf-8")
-    return f"""你现在是 Claude Code，正在被 OpenClaw 执行官 Skill 以 steer one-shot 方式调用。
-
-请对下面的 OpenClaw 安全审计包做上线前安全审查。
+当前工作目录就是本次审计 run 目录。请先读取 {manifest_name}，然后只在 manifest.allowedRoots 声明的 evidence/ 目录内查找证据。
 
 硬性要求：
-1. 只基于审计包里的真实证据判断。
-2. 不要假设生产配置已经被修复。
-3. 不要执行任何修复动作。
-4. 不要输出真实密钥明文。
-5. 如果审计范围不足，请明确指出缺少什么。
-6. 必须只输出一个 JSON 对象，不要输出 Markdown，不要输出解释性前后缀。
+1. 不要把 prompt 当作完整证据，真实证据在 evidence/ 和 {manifest_name} 里。
+2. 可以使用只读检索/读取动作来定位证据，例如 rg、读取文件片段、查看 manifest；不要修改 evidence/。
+3. 不要联网，不要读取本次审计工作区之外的路径，不要执行修复动作。
+4. 发现疑似密钥、Token、私钥时，只报告位置和脱敏片段，不要输出真实明文。
+5. 如果审计范围不足，请在 finding 或 recommendedOrder 中明确指出缺少什么。
+6. 必须把最终结果写入 {report_name}，并在 stdout 输出同一个 JSON 对象，不要输出 Markdown 前后缀。
 
 JSON 结构必须是：
 {{
@@ -583,7 +720,7 @@ JSON 结构必须是：
     {{
       "id": "CC-001",
       "severity": "critical | high | medium | low",
-      "location": "文件或配置位置",
+      "location": "evidence/...",
       "evidence": "脱敏证据",
       "risk": "影响说明",
       "recommendation": "建议动作"
@@ -593,14 +730,7 @@ JSON 结构必须是：
     "处置顺序 1"
   ]
 }}
-
-OpenClaw 安全审计包如下：
-
-```json
-{bundle_text}
-```
 """
-
 
 def claude_command_args(prompt):
     configured = os.getenv("CLAUDE_CODE_COMMAND", "").strip()
@@ -716,11 +846,19 @@ def report_from_claude_failure(state, evidence, error, raw_output=""):
     }
 
 
-def run_claude_code_audit(state, evidence, bundle_path):
-    prompt = build_claude_prompt(bundle_path)
-    prompt_path = RUNTIME_DIR / "claude_code_audit_prompt.md"
+def load_claude_report_json(report_path, raw_output):
+    if report_path.exists():
+        try:
+            return report_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return extract_json_object(raw_output)
+
+
+def run_claude_code_audit(state, evidence, run_dir, manifest_path, prompt_path, report_path):
+    prompt = build_claude_prompt(manifest_path, report_path)
     prompt_path.write_text(prompt, encoding="utf-8")
-    state["cloud"]["auditArtifacts"]["promptMd"] = str(prompt_path.relative_to(ROOT))
+    state["cloud"]["auditArtifacts"]["promptMd"] = safe_relative_to_root(prompt_path)
 
     timeout = int(os.getenv("CLAUDE_CODE_TIMEOUT", "120"))
     args = claude_command_args(prompt)
@@ -728,13 +866,13 @@ def run_claude_code_audit(state, evidence, bundle_path):
         "ok": False,
         "command": " ".join(args[:2]) if args else "",
         "error": "",
-        "prompt": str(prompt_path.relative_to(ROOT)),
+        "prompt": safe_relative_to_root(prompt_path),
         "rawOutput": "",
     }
     try:
         completed = subprocess.run(
             args,
-            cwd=str(ROOT.parent),
+            cwd=str(run_dir),
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -763,9 +901,9 @@ def run_claude_code_audit(state, evidence, bundle_path):
         state["cloud"]["claudeInvocation"]["error"] = redact_sensitive(error)
         return report_from_claude_failure(state, evidence, error, raw_output)
 
-    json_text = extract_json_object(raw_output)
+    json_text = load_claude_report_json(report_path, raw_output)
     if not json_text:
-        error = "Claude Code 已返回内容，但没有返回可解析的 JSON 对象。"
+        error = "Claude Code 已返回内容，但没有写入或输出可解析的 JSON 对象。"
         state["cloud"]["claudeInvocation"]["error"] = error
         return report_from_claude_failure(state, evidence, error, raw_output)
     try:
@@ -777,6 +915,7 @@ def run_claude_code_audit(state, evidence, bundle_path):
 
     state["cloud"]["claudeInvocation"]["ok"] = True
     return report_from_claude_json(parsed, state, evidence, raw_output)
+
 
 
 def compute_risk(state):
@@ -795,6 +934,7 @@ def compute_risk(state):
 def public_status(state):
     out = copy.deepcopy(state)
     out["riskLevel"] = compute_risk(state)
+    out["cloud"]["auditRunning"] = bool(out["cloud"].get("auditRunning")) or AUDIT_LOCK.locked()
     return out
 
 
@@ -839,8 +979,9 @@ def claude_code_analyze_cloud(state):
         "tokenBudgetEnabled": evidence["token_budget_enabled"],
     }
 
-    bundle_path = write_audit_bundle(state)
-    report = run_claude_code_audit(state, evidence, bundle_path)
+    state["cloud"]['auditMethod'] = "manifest-driven workspace audit"
+    run_dir, manifest_path, prompt_path, report_path = create_audit_run_workspace(state, evidence)
+    report = run_claude_code_audit(state, evidence, run_dir, manifest_path, prompt_path, report_path)
     if not report["recommendedOrder"]:
         report["recommendedOrder"] = [
             "1. 优先处理 critical/high 风险发现。",
@@ -848,7 +989,7 @@ def claude_code_analyze_cloud(state):
             "3. 用最终复检结论判断是否进入上线前人工复核。",
         ]
     state["cloud"]["claudeReport"] = report
-    write_audit_artifacts(state, report)
+    write_audit_artifacts(state, report, run_dir)
 
     lines = [
         f"审计目标：{report['target']} on {report['server']}",
@@ -859,7 +1000,7 @@ def claude_code_analyze_cloud(state):
         f"审计目录数：{len(evidence['audit_roots'])}",
         f"扫描文件数：{evidence['scanned_files']}",
         f"发现数量：{len(report['findings'])}；整体风险：{report['summary']['overallRisk']}",
-        f"审计包：{state['cloud']['auditArtifacts']['bundle']}",
+        f"审计清单：{state['cloud']['auditArtifacts']['manifest']}",
         f"Claude Prompt：{state['cloud']['auditArtifacts']['promptMd']}",
         f"Markdown 报告：{state['cloud']['auditArtifacts']['reportMd']}",
         f"JSON 报告：{state['cloud']['auditArtifacts']['reportJson']}",
@@ -1546,8 +1687,9 @@ OpenClaw 工具调用审计日志</div>
         const key = btn.dataset.action;
         btn.classList.toggle('done', !!p[key]);
         btn.classList.toggle('next', key === next);
+        btn.disabled = !!s.cloud.auditRunning && key === 'scan';
       });
-      document.getElementById('nextAction').textContent = nextPhase(p)[1];
+      document.getElementById('nextAction').textContent = s.cloud.auditRunning ? 'Claude Code 正在审计 evidence 工作区，请等待当前任务完成。' : nextPhase(p)[1];
     }
     function severityLabel(value) {
       const v = String(value || '').toLowerCase();
@@ -1623,7 +1765,7 @@ OpenClaw 工具调用审计日志</div>
     async function load() {
       const res = await fetch('/api/status');
       const s = await res.json();
-      const callMethod = s.cloud.auditMethod === 'steer one-shot' ? 'steer 一次性调用' : s.cloud.auditMethod;
+      const callMethod = s.cloud.auditMethod === 'manifest-driven workspace audit' ? 'manifest 工作区审计' : s.cloud.auditMethod === 'steer one-shot' ? 'steer 一次性调用' : s.cloud.auditMethod;
       const runtime = s.cloud.runtime === 'OpenClaw + Claude Code' ? 'OpenClaw + Claude Code' : s.cloud.runtime;
       const logWindow = s.cloud.logWindow === 'last 24h' ? '最近 24 小时' : s.cloud.logWindow;
       const report = s.cloud.claudeReport;
@@ -1638,11 +1780,12 @@ OpenClaw 工具调用审计日志</div>
       const secretStorage = s.cloud.configSnapshot.secretStorage === 'plain env file' ? '明文环境文件' : s.cloud.configSnapshot.secretStorage;
       const openPorts = s.cloud.configSnapshot.openPorts.length ? s.cloud.configSnapshot.openPorts.join(', ') : '待检测';
       const websocketBind = s.cloud.configSnapshot.websocketBind || '待检测';
-      const claudeCall = s.cloud.claudeInvocation && s.cloud.claudeInvocation.ok ? '成功' : report ? '失败' : '待调用';
+      const claudeCall = s.cloud.auditRunning ? '运行中' : s.cloud.claudeInvocation && s.cloud.claudeInvocation.ok ? '成功' : report ? '失败' : '待调用';
       const auditRoots = s.cloud.auditRoots && s.cloud.auditRoots.length ? s.cloud.auditRoots.join('\\n') : '待检测';
       document.getElementById('cloudStatusGrid').innerHTML = [
         item('云服务器', s.cloud.server, '', 'safeBox'),
         item('运行时', runtime, '', 'safeBox'),
+        item('审计运行', s.cloud.auditRunning ? '运行中' : '空闲', s.cloud.auditRunning ? 'high' : 'controlled', s.cloud.auditRunning ? 'highBox' : 'safeBox'),
         item('调用方式', callMethod, 'controlled', 'safeBox'),
         item('Claude 调用', claudeCall, claudeCall === '成功' ? 'controlled' : 'high', claudeCall === '成功' ? 'safeBox' : 'highBox'),
         item('日志窗口', logWindow, '', 'safeBox'),
@@ -1661,7 +1804,7 @@ OpenClaw 工具调用审计日志</div>
         item('严重风险', criticalCount, criticalCount ? 'critical' : 'controlled', criticalCount ? 'criticalBox' : 'safeBox'),
         item('高危风险', highCount, highCount ? 'high' : 'controlled', highCount ? 'highBox' : 'safeBox'),
         item('中危风险', mediumCount, mediumCount ? 'high' : 'controlled', mediumCount ? 'highBox' : 'safeBox'),
-        item('审计包', s.cloud.auditArtifacts.bundle || '未生成', s.cloud.auditArtifacts.bundle ? 'controlled' : '', s.cloud.auditArtifacts.bundle ? 'safeBox' : ''),
+        item('审计清单', s.cloud.auditArtifacts.manifest || s.cloud.auditArtifacts.bundle || '未生成', (s.cloud.auditArtifacts.manifest || s.cloud.auditArtifacts.bundle) ? 'controlled' : '', (s.cloud.auditArtifacts.manifest || s.cloud.auditArtifacts.bundle) ? 'safeBox' : ''),
         item('Markdown 报告', s.cloud.auditArtifacts.reportMd || '未生成', s.cloud.auditArtifacts.reportMd ? 'controlled' : '', s.cloud.auditArtifacts.reportMd ? 'safeBox' : '')
       ].join('');
       renderJourney(s);
@@ -1766,10 +1909,30 @@ class OpenClawHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "report": report, "state": public_status(state)})
             return
         if path == "/claude-code/analyze-cloud":
-            report = claude_code_analyze_cloud(state)
-            save_state(state)
-            self.send_json({"ok": True, "report": report, "state": public_status(state)})
-            return
+            if not AUDIT_LOCK.acquire(blocking=False):
+                state["cloud"]["auditRunning"] = True
+                self.send_json({"ok": False, "error": "audit already running", "state": public_status(state)}, status=409)
+                return
+            try:
+                state["cloud"]["auditRunning"] = True
+                state["cloud"]["auditStartedAt"] = now()
+                state["cloud"]["auditFinishedAt"] = ""
+                save_state(state)
+                report = claude_code_analyze_cloud(state)
+                state["cloud"]["auditRunning"] = False
+                state["cloud"]["auditFinishedAt"] = now()
+                save_state(state)
+                self.send_json({"ok": True, "report": report, "state": public_status(state)})
+                return
+            except Exception as exc:
+                state["cloud"]["auditRunning"] = False
+                state["cloud"]["auditFinishedAt"] = now()
+                add_event(state, "claude_code_log_audit", state["cloud"]["server"], False, "high", str(exc))
+                save_state(state)
+                self.send_json({"ok": False, "error": str(exc), "state": public_status(state)}, status=500)
+                return
+            finally:
+                AUDIT_LOCK.release()
         if path == "/claude-code/enable-monitoring":
             report = claude_code_enable_monitoring(state)
             save_state(state)
@@ -1790,3 +1953,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
