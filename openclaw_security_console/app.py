@@ -623,7 +623,9 @@ def create_audit_run_workspace(state, evidence):
                     "location": "evidence/...",
                     "evidence": "脱敏证据",
                     "risk": "影响说明",
-                    "recommendation": "建议动作",
+                    "recommendation": "一句话结论",
+                    "remediationSteps": ["基于该证据的具体处置步骤 1"],
+                    "verification": ["完成处置后要检查的证据 1"],
                 }
             ],
             "recommendedOrder": ["处置顺序 1"],
@@ -672,6 +674,8 @@ def write_audit_artifacts(state, report, run_dir=None):
         "",
     ]
     for item in report["findings"]:
+        remediation_steps = item.get("remediationSteps") or []
+        verification = item.get("verification") or []
         md_lines.extend(
             [
                 f"### {item['id']}｜{item['severity']}",
@@ -680,9 +684,15 @@ def write_audit_artifacts(state, report, run_dir=None):
                 f"- 证据：{item['evidence']}",
                 f"- 影响：{item['risk']}",
                 f"- 建议：{item['recommendation']}",
-                "",
             ]
         )
+        if remediation_steps:
+            md_lines.append("- 具体处置：")
+            md_lines.extend([f"  - {line}" for line in remediation_steps])
+        if verification:
+            md_lines.append("- 复核方式：")
+            md_lines.extend([f"  - {line}" for line in verification])
+        md_lines.append("")
     md_lines.extend(["## 建议处置顺序", ""])
     md_lines.extend([f"{line}" for line in report["recommendedOrder"]])
     report_md_path.write_text("\n".join(md_lines), encoding="utf-8")
@@ -704,8 +714,9 @@ def build_claude_prompt(manifest_path, report_path):
 2. 可以使用只读检索/读取动作来定位证据，例如 rg、读取文件片段、查看 manifest；不要修改 evidence/。
 3. 不要联网，不要读取本次审计工作区之外的路径，不要执行修复动作。
 4. 发现疑似密钥、Token、私钥时，只报告位置和脱敏片段，不要输出真实明文。
-5. 如果审计范围不足，请在 finding 或 recommendedOrder 中明确指出缺少什么。
-6. 不要写文件；必须只在 stdout 输出一个 JSON 对象，不要输出 Markdown 前后缀。Security Guardian 会负责写入 report.json 和 report.md。
+5. 每个 finding 都要给出针对该证据的 recommendation、remediationSteps 和 verification，不要只输出通用模板。
+6. 如果审计范围不足，请在 finding 或 recommendedOrder 中明确指出缺少什么。
+7. 不要写文件；必须只在 stdout 输出一个 JSON 对象，不要输出 Markdown 前后缀。Security Guardian 会负责写入 report.json 和 report.md。
 
 JSON 结构必须是：
 {{
@@ -722,7 +733,13 @@ JSON 结构必须是：
       "location": "evidence/...",
       "evidence": "脱敏证据",
       "risk": "影响说明",
-      "recommendation": "建议动作"
+      "recommendation": "一句话结论",
+      "remediationSteps": [
+        "基于该证据的具体处置步骤 1"
+      ],
+      "verification": [
+        "完成处置后要检查的证据 1"
+      ]
     }}
   ],
   "recommendedOrder": [
@@ -751,6 +768,23 @@ def extract_json_object(text):
     return text[start : end + 1]
 
 
+def list_of_strings(value, limit=8):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        text = redact_sensitive(str(item).strip())
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def normalize_finding(item, idx):
     if not isinstance(item, dict):
         item = {"evidence": str(item)}
@@ -764,6 +798,8 @@ def normalize_finding(item, idx):
         "evidence": redact_sensitive(str(item.get("evidence") or "Claude Code 未返回证据")),
         "risk": str(item.get("risk") or "Claude Code 未返回影响说明"),
         "recommendation": str(item.get("recommendation") or "请人工复核该风险。"),
+        "remediationSteps": list_of_strings(item.get("remediationSteps") or item.get("remediation_steps")),
+        "verification": list_of_strings(item.get("verification") or item.get("verificationSteps") or item.get("verification_steps")),
     }
 
 
@@ -938,6 +974,18 @@ def findings_by_ids(state, prefixes):
     return [item for item in get_findings(state) if str(item.get("id", "")).startswith(prefixes)]
 
 
+def finding_list_values(findings, key, limit=8):
+    values = []
+    for item in findings:
+        for value in item.get(key) or []:
+            text = str(value).strip()
+            if text and text not in values:
+                values.append(text)
+            if len(values) >= limit:
+                return values
+    return values
+
+
 def make_advice_lines(state, title, related, fallback, actions, evidence_required):
     lines = [f"建议主题：{title}", "说明：以下为基于真实审计证据生成的建议，不会自动修改 OpenClaw 生产配置。"]
     if related:
@@ -946,9 +994,21 @@ def make_advice_lines(state, title, related, fallback, actions, evidence_require
             lines.append(f"- {item['id']} {item['severity'].upper()}｜{item['location']}｜{item['risk']}")
     else:
         lines.append(f"当前审计包未命中直接证据：{fallback}")
-    lines.append("建议动作：")
+    claude_steps = finding_list_values(related, "remediationSteps")
+    claude_verification = finding_list_values(related, "verification")
+    if claude_steps:
+        lines.append("Claude 针对性处置建议：")
+        lines.extend([f"- {item}" for item in claude_steps])
+        lines.append("治理兜底动作：")
+    else:
+        lines.append("建议动作：")
     lines.extend([f"- {item}" for item in actions])
-    lines.append("复核证据：")
+    if claude_verification:
+        lines.append("Claude 复核证据：")
+        lines.extend([f"- {item}" for item in claude_verification])
+        lines.append("通用复核证据：")
+    else:
+        lines.append("复核证据：")
     lines.extend([f"- {item}" for item in evidence_required])
     return lines
 
@@ -1478,6 +1538,12 @@ def page_html():
       line-height: 1.45;
     }
     .kv b { color: var(--muted); font-weight: 700; }
+    .miniList {
+      margin: 0;
+      padding-left: 16px;
+      display: grid;
+      gap: 4px;
+    }
     .timeline {
       display: grid;
       gap: 10px;
@@ -1696,6 +1762,15 @@ OpenClaw 工具调用审计日志</div>
       if (v === 'medium') return 'medium';
       return 'medium';
     }
+    function listItems(values) {
+      const arr = Array.isArray(values) ? values.filter(Boolean) : [];
+      if (!arr.length) return '';
+      return `<ul class="miniList">${arr.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul>`;
+    }
+    function optionalKv(label, values) {
+      const html = listItems(values);
+      return html ? `<div class="kv"><b>${label}</b><span>${html}</span></div>` : '';
+    }
     function renderFindings(s) {
       const report = s.cloud.claudeReport;
       if (!report || !report.findings || !report.findings.length) {
@@ -1711,6 +1786,8 @@ OpenClaw 工具调用审计日志</div>
           <div class="kv"><b>证据</b><span>${escapeHtml(f.evidence)}</span></div>
           <div class="kv"><b>影响</b><span>${escapeHtml(f.risk)}</span></div>
           <div class="kv"><b>建议</b><span>${escapeHtml(f.recommendation)}</span></div>
+          ${optionalKv('处置', f.remediationSteps)}
+          ${optionalKv('复核', f.verification)}
         </div>
       `).join('');
     }

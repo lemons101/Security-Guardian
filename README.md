@@ -2,7 +2,7 @@
 
 第 20 章《企业级数字员工的安全审计与生产治理》实战项目。
 
-Security Guardian 是一个面向云端 OpenClaw 的安全自审计控制台。它不做攻击演示，也不是一键修复器，而是把 OpenClaw 的真实日志、配置和运行证据交给 Claude Code 审查，再把结果整理成风险报告、告警建议、治理建议和最终复检结论。
+Security Guardian 是一个面向云端 OpenClaw 的安全自审计控制台。它不做攻击演示，也不是一键修复器，而是把 OpenClaw 的真实日志、配置和运行证据交给 Claude Code 审查，再把 Claude 给出的风险、具体处置步骤和复核办法整理成报告、告警建议、治理建议和最终复检结论。
 
 ## 架构摘要
 
@@ -15,8 +15,8 @@ Security Guardian 位于 OpenClaw 和 Claude Code 之间：它只读采集 OpenC
 | 模块 | 负责什么 | 不负责什么 |
 |---|---|---|
 | OpenClaw | 提供真实审计材料，触发检测流程 | 不把生产权限直接交给 Claude |
-| Security Guardian | 采集证据、脱敏、调用 Claude、展示报告 | 不自动修改生产配置 |
-| Claude Code | 基于审计包判断风险、输出建议 | 不读取真实密钥，不执行修复命令 |
+| Security Guardian | 采集证据、脱敏、调用 Claude、展示报告，并在 Claude 输出不足时使用兜底建议 | 不自动修改生产配置 |
+| Claude Code | 基于审计包判断风险，输出 recommendation、remediationSteps、verification | 不读取真实密钥，不执行修复命令 |
 | 人工 / 运维 | 根据建议执行真实治理并复核 | 不把“建议已生成”当成“已治理” |
 
 ## 审计内容
@@ -102,16 +102,17 @@ export CLAUDE_CODE_COMMAND="claude -p"
 
 1. 执行真实检测：扫描 `OPENCLAW_ROOT`，生成审计包，并调用 Claude Code。
 2. 生成告警规则：把 high / critical 风险整理成告警建议。
-3. 生成治理建议：输出控制面、Skill、密钥、denyList、Token 熔断等建议。
+3. 生成治理建议：优先整理 Claude 针对每条证据给出的处置步骤和复核办法；Claude 输出不足时，再使用控制面、Skill、密钥、denyList、Token 熔断等兜底建议。
 4. 最终复检：根据 Claude 调用状态、扫描覆盖范围和风险等级给出上线前判断。
 
 ## 生成文件
 
 ```text
-openclaw_security_console/runtime/security_audit_bundle.json
-openclaw_security_console/runtime/claude_code_audit_prompt.md
-openclaw_security_console/runtime/security_audit_report.md
-openclaw_security_console/runtime/security_audit_report.json
+openclaw_security_console/runtime/audit_runs/<run_id>/manifest.json
+openclaw_security_console/runtime/audit_runs/<run_id>/evidence/
+openclaw_security_console/runtime/audit_runs/<run_id>/audit_request.md
+openclaw_security_console/runtime/audit_runs/<run_id>/report.md
+openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 ```
 
 ## 安全边界
@@ -120,6 +121,7 @@ openclaw_security_console/runtime/security_audit_report.json
 - 疑似密钥字段会脱敏，不展示真实密钥明文。
 - Claude Code 调用失败时会显示 `CC-CALL-FAILED`，不会伪造成功。
 - 页面中的“建议已生成”不等于“生产已治理”。
+- 同一个风险编号可能命中不同证据；Claude 的 `remediationSteps` 和 `verification` 用来体现本次证据的差异，Security Guardian 的固定建议只是兜底。
 - 审计页面不建议长期裸露公网，生产环境请加 IP 白名单、Basic Auth、VPN 或企业 SSO。
 
 ## 配套文档
