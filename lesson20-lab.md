@@ -94,7 +94,7 @@ export CLAUDE_CODE_COMMAND="你的 Claude Code 非交互调用命令，例如 cl
 执行：
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
-OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
+OPENCLAW_ROOT=/root/.openclaw CLAUDE_CODE_TIMEOUT=300 ./run_dashboard.sh
 
 要求：
 1. 服务监听 0.0.0.0:8511
@@ -105,8 +105,9 @@ OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
 1. 服务是否启动成功
 2. 是否监听 0.0.0.0:8511
 3. OPENCLAW_ROOT 实际值
-4. 是否自动纳入 /tmp/openclaw 等额外审计目录
-5. 页面链接是否为 http://101.47.152.44:8511/dashboard.html
+4. CLAUDE_CODE_TIMEOUT 实际值是否为 300
+5. 是否自动纳入 /tmp/openclaw 等额外审计目录
+6. 页面链接是否为 http://101.47.152.44:8511/dashboard.html
 ```
 
 ---

@@ -44,10 +44,10 @@ Security Guardian + Claude Code 重点检查：
 ```bash
 cd /root/projects/Security-Guardian
 chmod +x run_dashboard.sh
-OPENCLAW_ROOT=/root/.openclaw ./run_dashboard.sh
+OPENCLAW_ROOT=/root/.openclaw CLAUDE_CODE_TIMEOUT=300 ./run_dashboard.sh
 ```
 
-当前云端 OpenClaw 的运行根目录通常是 `/root/.openclaw`。如果你的实际目录不同，请把 `OPENCLAW_ROOT` 改成真实运行目录。
+当前云端 OpenClaw 的运行根目录通常是 `/root/.openclaw`。如果你的实际目录不同，请把 `OPENCLAW_ROOT` 改成真实运行目录。`CLAUDE_CODE_TIMEOUT=300` 会给 Claude Code 留足读取 evidence 和输出 JSON 的时间。
 
 Security Guardian 默认还会尝试只读扫描这些高价值审计目录：
 
