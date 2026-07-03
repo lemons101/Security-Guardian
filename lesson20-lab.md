@@ -24,7 +24,7 @@
 ```text
 OpenClaw 真实日志 / 配置 / Skill 记录
   -> Security Guardian 创建本次 audit run 工作区
-  -> 复制允许审计的 evidence 并生成 manifest.json
+  -> 复制允许审计的 evidence：先脱敏、再截断、再生成 manifest.json
   -> Claude Code CLI 在工作区内自行检索证据并从 stdout 返回 JSON
   -> Claude 输出每条风险的结论、具体处置步骤和复核办法
   -> Security Guardian 负责整理展示；Claude 没给够时再用固定建议兜底
@@ -130,9 +130,10 @@ curl -X POST http://127.0.0.1:8511/claude-code/analyze-cloud
 5. 是否生成 runtime/audit_runs/<run_id>/evidence/
 6. 是否生成 runtime/audit_runs/<run_id>/audit_request.md
 7. Security Guardian 是否根据 Claude stdout 生成 runtime/audit_runs/<run_id>/report.json 和 report.md
-8. report.json 的 findings 是否包含 recommendation、remediationSteps、verification
-9. 是否出现 CC-CALL-FAILED
-10. 是否出现 audit already running；如果出现，说明已有检测在运行，请等待完成后重试
+8. manifest.json 的 evidenceFiles 是否标记 redacted: true；如文件过大是否标记 truncated: true
+9. report.json 的 findings 是否包含 recommendation、remediationSteps、verification
+10. 是否出现 CC-CALL-FAILED
+11. 是否出现 audit already running；如果出现，说明已有检测在运行，请等待完成后重试
 
 完成后告诉我：
 1. Claude Code 是否调用成功
@@ -233,7 +234,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.md
 openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 ```
 
-说明：`audit_request.md` 只是短任务说明，真实证据在 `evidence/` 和 `manifest.json` 中；Claude Code 会在该 run 目录内自行检索证据，并在 stdout 返回 JSON。`report.json` 和 `report.md` 由 Security Guardian 写入，其中会保留 Claude 给出的 `recommendation`、`remediationSteps` 和 `verification`。
+说明：`audit_request.md` 只是短任务说明，证据在 `evidence/` 和 `manifest.json` 中；写入 `evidence/` 前会先做文本脱敏和截断，Claude Code 会在该 run 目录内自行检索这些已脱敏证据，并在 stdout 返回 JSON。`report.json` 和 `report.md` 由 Security Guardian 写入，其中会保留 Claude 给出的 `recommendation`、`remediationSteps` 和 `verification`。
 ---
 
 ## 8. 验收检查清单
@@ -245,7 +246,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 - [ ] 页面可以访问
 - [ ] Claude 调用成功
 - [ ] 扫描文件数大于 0
-- [ ] manifest、evidence、audit_request、Markdown 报告、JSON 报告均已生成
+- [ ] manifest、已脱敏 evidence、audit_request、Markdown 报告、JSON 报告均已生成
 - [ ] 页面显示风险发现
 - [ ] 页面显示 Claude 针对性处置 / 复核建议，或显示 Security Guardian 兜底建议
 - [ ] 页面显示最终复检结论
@@ -262,6 +263,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 | `OPENCLAW_ROOT` 待检测 | 路径没设置或设置错 | 「请重新定位真实 OpenClaw 目录」 |
 | 扫描文件数为 0 | 指到了空目录或日志不在范围内 | 「请列出 OPENCLAW_ROOT 下的日志和配置文件」 |
 | 扫描文件太多或 evidence 过宽 | 审计目录过宽、历史 session 太多 | 「请调低 OPENCLAW_MAX_AUDIT_FILES 和 OPENCLAW_MAX_FILES_PER_ROOT，并缩窄 OPENCLAW_AUDIT_PATHS」 |
+| 担心 evidence 含敏感值 | 当前 evidence 写入前会脱敏并截断，manifest 会记录 redacted/truncated | 「请抽查 evidence 文件和 manifest.json 的 evidenceFiles」 |
 | `audit already running` | 已有 Claude Code 审计任务在运行，系统已阻止并发启动 | 「请等待当前检测完成后再重新执行 /claude-code/analyze-cloud」 |
 | 页面打不开 | 8511 未监听或安全组未放行 | 「请检查 8511 监听和云安全组」 |
 | 页面有建议但没修复 | 正常，本项目只生成建议 | 「请不要声称已治理，除非真实修改并复核」 |
@@ -271,7 +273,7 @@ openclaw_security_console/runtime/audit_runs/<run_id>/report.json
 
 ## 10. 本节课带走什么
 
-- 会让 OpenClaw 收集真实审计材料并生成受控 evidence 工作区
+- 会让 OpenClaw 收集真实审计材料，并生成已脱敏、已截断的受控 evidence 工作区
 - 会让 Claude Code 自行检索 evidence、stdout 返回 JSON，再由 Security Guardian 生成结构化安全报告
 - 会让 Claude 输出针对证据的处置步骤和复核办法，Security Guardian 只负责整理和兜底
 - 会区分“建议已生成”和“生产已治理”

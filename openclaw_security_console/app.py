@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import threading
 import time
@@ -146,12 +145,26 @@ def add_report(state, title, lines):
     return report
 
 
-SENSITIVE_VALUE_RE = re.compile(r"(?i)(token|secret|api[_-]?key|password|passwd|private[_-]?key)(\s*[:=]\s*)(['\"]?)[^'\"\s,}]+")
+SENSITIVE_VALUE_RE = re.compile(
+    r"(?i)\b(token|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|api[_-]?key|apikey|password|passwd|private[_-]?key|authorization|auth)\b(\s*[:=]\s*)(['\"]?)[^'\"\s,}]+"
+)
+AUTH_BEARER_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/=-]+")
+BEARER_RE = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
+OPENAI_KEY_RE = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")
+AWS_ACCESS_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
+PRIVATE_KEY_BLOCK_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S)
+QUERY_SECRET_RE = re.compile(r"(?i)([?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=)[^&\s]+")
 
 
 def redact_sensitive(text):
-    return SENSITIVE_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}<REDACTED>", text)
-
+    text = PRIVATE_KEY_BLOCK_RE.sub("<PRIVATE_KEY_BLOCK_REDACTED>", text)
+    text = AUTH_BEARER_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
+    text = BEARER_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
+    text = SENSITIVE_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}<REDACTED>", text)
+    text = OPENAI_KEY_RE.sub("sk-<REDACTED>", text)
+    text = AWS_ACCESS_KEY_RE.sub("<AWS_ACCESS_KEY_REDACTED>", text)
+    text = QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
+    return text
 
 def find_openclaw_root():
     env_root = os.getenv("OPENCLAW_ROOT", "").strip()
@@ -559,19 +572,31 @@ def copy_evidence_file(source_text, evidence_dir, audit_roots):
         rel_path = evidence_relative_path(source, audit_roots)
         dest = evidence_dir / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with source.open("rb") as src, dest.open("wb") as dst:
-            shutil.copyfileobj(src, dst, length=1024 * 1024)
+        max_bytes = env_int("OPENCLAW_MAX_FILE_BYTES", 20_000)
+        original_bytes = source.stat().st_size
+        content = safe_read_text(source, max_bytes=max_bytes)
+        if not content and original_bytes:
+            return {
+                "source": str(source),
+                "error": "无法按文本读取，未复制到 evidence。",
+                "redacted": True,
+            }
+        redacted = redact_sensitive(content)
+        dest.write_text(redacted, encoding="utf-8")
         return {
             "source": str(source),
             "evidencePath": str(dest.relative_to(evidence_dir.parent)).replace("\\", "/"),
             "bytes": dest.stat().st_size,
+            "sourceBytes": original_bytes,
+            "redacted": True,
+            "truncated": original_bytes > max_bytes,
         }
     except Exception as exc:
         return {
             "source": str(source_text),
             "error": str(exc),
+            "redacted": True,
         }
-
 
 def create_audit_run_workspace(state, evidence):
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -598,8 +623,14 @@ def create_audit_run_workspace(state, evidence):
         "allowedRoots": ["evidence"],
         "writeTargets": [],
         "denyPatterns": [".ssh", ".aws", "id_rsa", "private_key", "credentials", ".env"],
+        "redaction": {
+            "enabled": True,
+            "method": "copy-time text redaction and truncation",
+            "maxBytesPerFile": env_int("OPENCLAW_MAX_FILE_BYTES", 20_000),
+        },
         "rules": [
             "只读取 evidence/ 下的文件和 manifest.json。",
+            "evidence/ 内文件已由 Security Guardian 在复制时脱敏和截断；不要把脱敏占位符当成真实密钥。",
             "不要修改 evidence/，不要执行修复动作。",
             "不要联网，不要读取本次审计工作区之外的路径。",
             "发现疑似密钥时只报告位置和脱敏片段，不输出真实密钥明文。",
