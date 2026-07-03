@@ -572,9 +572,8 @@ def copy_evidence_file(source_text, evidence_dir, audit_roots):
         rel_path = evidence_relative_path(source, audit_roots)
         dest = evidence_dir / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        max_bytes = env_int("OPENCLAW_MAX_FILE_BYTES", 20_000)
         original_bytes = source.stat().st_size
-        content = safe_read_text(source, max_bytes=max_bytes)
+        content = source.read_text(encoding="utf-8", errors="ignore")
         if not content and original_bytes:
             return {
                 "source": str(source),
@@ -589,7 +588,6 @@ def copy_evidence_file(source_text, evidence_dir, audit_roots):
             "bytes": dest.stat().st_size,
             "sourceBytes": original_bytes,
             "redacted": True,
-            "truncated": original_bytes > max_bytes,
         }
     except Exception as exc:
         return {
@@ -625,12 +623,11 @@ def create_audit_run_workspace(state, evidence):
         "denyPatterns": [".ssh", ".aws", "id_rsa", "private_key", "credentials", ".env"],
         "redaction": {
             "enabled": True,
-            "method": "copy-time text redaction and truncation",
-            "maxBytesPerFile": env_int("OPENCLAW_MAX_FILE_BYTES", 20_000),
+            "method": "copy-time full-text redaction",
         },
         "rules": [
             "只读取 evidence/ 下的文件和 manifest.json。",
-            "evidence/ 内文件已由 Security Guardian 在复制时脱敏和截断；不要把脱敏占位符当成真实密钥。",
+            "evidence/ 内文件已由 Security Guardian 在复制时脱敏；不要把脱敏占位符当成真实密钥。",
             "不要修改 evidence/，不要执行修复动作。",
             "不要联网，不要读取本次审计工作区之外的路径。",
             "发现疑似密钥时只报告位置和脱敏片段，不输出真实密钥明文。",
