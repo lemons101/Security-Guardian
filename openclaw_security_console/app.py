@@ -146,7 +146,7 @@ def add_report(state, title, lines):
 
 
 SENSITIVE_VALUE_RE = re.compile(
-    r"(?i)\b(token|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|api[_-]?key|apikey|password|passwd|private[_-]?key|authorization|auth)\b(\s*[:=]\s*)(['\"]?)[^'\"\s,}]+"
+    r"(?i)(['\"]?\b(?:token|access[_-]?token|refresh[_-]?token|id[_-]?token|secret|api[_-]?key|apikey|password|passwd|private[_-]?key|authorization|auth)\b['\"]?\s*[:=]\s*)(['\"]?)[^'\"\s,}]+"
 )
 AUTH_BEARER_RE = re.compile(r"(?i)\b(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/=-]+")
 BEARER_RE = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}")
@@ -160,7 +160,7 @@ def redact_sensitive(text):
     text = PRIVATE_KEY_BLOCK_RE.sub("<PRIVATE_KEY_BLOCK_REDACTED>", text)
     text = AUTH_BEARER_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
     text = BEARER_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
-    text = SENSITIVE_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}<REDACTED>", text)
+    text = SENSITIVE_VALUE_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}<REDACTED>", text)
     text = OPENAI_KEY_RE.sub("sk-<REDACTED>", text)
     text = AWS_ACCESS_KEY_RE.sub("<AWS_ACCESS_KEY_REDACTED>", text)
     text = QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}<REDACTED>", text)
@@ -987,6 +987,10 @@ def public_status(state):
     out = copy.deepcopy(state)
     out["riskLevel"] = compute_risk(state)
     out["cloud"]["auditRunning"] = bool(out["cloud"].get("auditRunning")) or AUDIT_LOCK.locked()
+    for item in out.get("cloud", {}).get("logs", []):
+        if isinstance(item, dict):
+            item["source"] = redact_sensitive(str(item.get("source", "")))[:120]
+            item["message"] = redact_sensitive(str(item.get("message", "")))[:500]
     invocation = out.get("cloud", {}).get("claudeInvocation") or {}
     invocation["rawOutput"] = ""
     if invocation.get("error"):
