@@ -128,11 +128,11 @@ def save_state(state):
 def add_event(state, action, target, allowed, risk="low", detail=""):
     event = {
         "time": now(),
-        "action": action,
-        "target": target,
+        "action": redact_sensitive(str(action))[:120],
+        "target": redact_sensitive(str(target))[:240],
         "allowed": allowed,
         "risk": risk,
-        "detail": detail,
+        "detail": redact_sensitive(str(detail))[:500],
     }
     state["auditEvents"].insert(0, event)
     state["auditEvents"] = state["auditEvents"][:80]
@@ -870,7 +870,6 @@ def report_from_claude_json(parsed, state, evidence, raw_output):
         },
         "findings": findings,
         "recommendedOrder": [str(item) for item in (parsed.get("recommendedOrder") or [])],
-        "rawOutput": raw_output[:8000],
     }
 
 
@@ -905,7 +904,6 @@ def report_from_claude_failure(state, evidence, error, raw_output=""):
             "2. 确认 OPENCLAW_ROOT 指向真实 OpenClaw 目录。",
             "3. 重新执行 Security Guardian 真实检测。",
         ],
-        "rawOutput": raw_output[:8000],
     }
 
 
@@ -989,6 +987,13 @@ def public_status(state):
     out = copy.deepcopy(state)
     out["riskLevel"] = compute_risk(state)
     out["cloud"]["auditRunning"] = bool(out["cloud"].get("auditRunning")) or AUDIT_LOCK.locked()
+    invocation = out.get("cloud", {}).get("claudeInvocation") or {}
+    invocation["rawOutput"] = ""
+    if invocation.get("error"):
+        invocation["error"] = redact_sensitive(str(invocation["error"]))[:1000]
+    report = out.get("cloud", {}).get("claudeReport")
+    if isinstance(report, dict):
+        report.pop("rawOutput", None)
     return out
 
 
@@ -1915,7 +1920,7 @@ OpenClaw 工具调用审计日志</div>
 
       document.getElementById('auditLog').innerHTML = s.auditEvents.slice(0, 12).map(e => {
         const cls = e.allowed ? 'ok' : 'bad';
-        return `<div class="row"><strong class="${cls}">${e.allowed ? 'ALLOWED' : 'BLOCKED'} · ${e.action}</strong>${e.time}<br>${e.target}<br>${e.detail || ''}</div>`;
+        return `<div class="row"><strong class="${cls}">${escapeHtml(e.allowed ? 'ALLOWED' : 'BLOCKED')} · ${escapeHtml(e.action)}</strong>${escapeHtml(e.time)}<br>${escapeHtml(e.target)}<br>${escapeHtml(e.detail || '')}</div>`;
       }).join('') || '<div class="row">暂无审计事件。</div>';
     }
     load();
