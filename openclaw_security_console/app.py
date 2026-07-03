@@ -987,10 +987,28 @@ def public_status(state):
     out = copy.deepcopy(state)
     out["riskLevel"] = compute_risk(state)
     out["cloud"]["auditRunning"] = bool(out["cloud"].get("auditRunning")) or AUDIT_LOCK.locked()
-    for item in out.get("cloud", {}).get("logs", []):
-        if isinstance(item, dict):
-            item["source"] = redact_sensitive(str(item.get("source", "")))[:120]
-            item["message"] = redact_sensitive(str(item.get("message", "")))[:500]
+    cloud = out.get("cloud", {})
+    logs = [item for item in cloud.get("logs", []) if isinstance(item, dict)]
+    levels = [str(item.get("level", "")).lower() for item in logs]
+    sources = []
+    latest_time = ""
+    for item in logs:
+        source = redact_sensitive(str(item.get("source", "")))[:120]
+        if source and source not in sources:
+            sources.append(source)
+        latest_time = str(item.get("time", "")) or latest_time
+    cloud["logSummary"] = {
+        "total": len(logs),
+        "critical": levels.count("critical"),
+        "high": levels.count("high"),
+        "warn": levels.count("warn"),
+        "medium": levels.count("medium"),
+        "info": levels.count("info"),
+        "latestTime": latest_time,
+        "sources": sources[:8],
+        "suppressed": True,
+    }
+    cloud["logs"] = []
     invocation = out.get("cloud", {}).get("claudeInvocation") or {}
     invocation["rawOutput"] = ""
     if invocation.get("error"):
@@ -1376,10 +1394,10 @@ def page_html():
     }
     main {
       display: grid;
-      grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.2fr);
-      gap: 16px;
-      padding: 16px;
-      max-width: 1480px;
+      grid-template-columns: minmax(340px, 0.92fr) minmax(520px, 1.35fr);
+      gap: 18px;
+      padding: 18px;
+      max-width: 1500px;
       width: 100%;
       margin: 0 auto;
     }
@@ -1387,8 +1405,9 @@ def page_html():
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 16px;
+      padding: 18px;
       min-width: 0;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
     }
     h2 {
       font-size: 15px;
@@ -1536,6 +1555,41 @@ def page_html():
       max-height: 440px;
       overflow: auto;
     }
+    .summaryPanel { display: grid; gap: 12px; }
+    .summaryGrid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      min-height: 70px;
+    }
+    .metric b { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .metric span { display: block; font-size: 20px; font-weight: 850; line-height: 1.15; overflow-wrap: anywhere; }
+    .noticeSafe {
+      border: 1px solid #abefc6;
+      background: var(--green-bg);
+      border-radius: 8px;
+      padding: 12px;
+      color: #05603a;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .noticeSafe strong { display: block; margin-bottom: 3px; }
+    .sourceList { display: flex; flex-wrap: wrap; gap: 8px; }
+    .sourceChip {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
     .finding {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -1610,7 +1664,7 @@ def page_html():
     .bad { color: var(--red); }
     @media (max-width: 960px) {
       main { grid-template-columns: 1fr; }
-      .actions, .grid, .roles { grid-template-columns: 1fr; }
+      .actions, .grid, .roles, .summaryGrid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1687,8 +1741,8 @@ OpenClaw 工具调用审计日志</div>
         <div class="timeline" id="reportTimeline">Loading...</div>
       </section>
       <section>
-        <h2>云端日志</h2>
-        <div class="log" id="cloudLogList">Loading...</div>
+        <h2>日志采集安全摘要</h2>
+        <div class="summaryPanel" id="cloudLogSummary">Loading...</div>
       </section>
       <section>
         <h2>告警规则</h2>
@@ -1841,14 +1895,25 @@ OpenClaw 工具调用审计日志</div>
       `).join('');
     }
     function renderCloudLogs(s) {
-      if (!s.cloud.logs.length) {
-        document.getElementById('cloudLogList').innerHTML = '<div class="row">尚未执行真实检测。请先执行“分析云端日志”。</div>';
-        return;
-      }
-      document.getElementById('cloudLogList').innerHTML = s.cloud.logs.map(x => {
-        const cls = x.level === 'critical' ? 'bad' : x.level === 'warn' ? 'high' : 'ok';
-        return `<div class="row"><strong class="${cls}">${escapeHtml(x.level.toUpperCase())} · ${escapeHtml(x.source)}</strong>${escapeHtml(x.time)}<br>${escapeHtml(x.message)}</div>`;
-      }).join('');
+      const summary = s.cloud.logSummary || {};
+      const total = summary.total || 0;
+      const risky = (summary.critical || 0) + (summary.high || 0) + (summary.warn || 0) + (summary.medium || 0);
+      const sources = Array.isArray(summary.sources) ? summary.sources : [];
+      document.getElementById('cloudLogSummary').innerHTML = `
+        <div class="noticeSafe">
+          <strong>原始日志正文不在网页展示</strong>
+          <span>页面只显示采集统计和来源摘要，避免日志中夹带的 token、密钥或会话内容被浏览器暴露。</span>
+        </div>
+        <div class="summaryGrid">
+          <div class="metric"><b>采集条目</b><span>${escapeHtml(total)}</span></div>
+          <div class="metric"><b>高风险命中</b><span class="${risky ? 'high' : 'controlled'}">${escapeHtml(risky)}</span></div>
+          <div class="metric"><b>严重</b><span class="${summary.critical ? 'critical' : 'controlled'}">${escapeHtml(summary.critical || 0)}</span></div>
+          <div class="metric"><b>最近时间</b><span>${escapeHtml(summary.latestTime || '待检测')}</span></div>
+        </div>
+        <div class="sourceList">
+          ${sources.length ? sources.map(x => `<span class="sourceChip">${escapeHtml(x)}</span>`).join('') : '<span class="sourceChip">尚未采集</span>'}
+        </div>
+      `;
     }
     function renderMonitorAlerts(s) {
       if (!s.cloud.monitorAlerts.length) {
