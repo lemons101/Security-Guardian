@@ -1652,10 +1652,6 @@ OpenClaw 工具调用审计日志</div>
         <div class="grid" id="cloudStatusGrid"></div>
       </section>
       <section>
-        <h2>真实检测状态总览</h2>
-        <div class="grid" id="statusGrid"></div>
-      </section>
-      <section>
         <h2>检测与建议流程</h2>
         <div class="journey" id="journey"></div>
       </section>
@@ -1678,6 +1674,10 @@ OpenClaw 工具调用审计日志</div>
       </section>
     </div>
     <div class="stack">
+      <section>
+        <h2>真实检测状态总览</h2>
+        <div class="grid" id="statusGrid"></div>
+      </section>
       <section>
         <h2>Claude Code 风险发现</h2>
         <div class="cards" id="findingCards">Loading...</div>
