@@ -988,27 +988,8 @@ def public_status(state):
     out["riskLevel"] = compute_risk(state)
     out["cloud"]["auditRunning"] = bool(out["cloud"].get("auditRunning")) or AUDIT_LOCK.locked()
     cloud = out.get("cloud", {})
-    logs = [item for item in cloud.get("logs", []) if isinstance(item, dict)]
-    levels = [str(item.get("level", "")).lower() for item in logs]
-    sources = []
-    latest_time = ""
-    for item in logs:
-        source = redact_sensitive(str(item.get("source", "")))[:120]
-        if source and source not in sources:
-            sources.append(source)
-        latest_time = str(item.get("time", "")) or latest_time
-    cloud["logSummary"] = {
-        "total": len(logs),
-        "critical": levels.count("critical"),
-        "high": levels.count("high"),
-        "warn": levels.count("warn"),
-        "medium": levels.count("medium"),
-        "info": levels.count("info"),
-        "latestTime": latest_time,
-        "sources": sources[:8],
-        "suppressed": True,
-    }
     cloud["logs"] = []
+    cloud.pop("logSummary", None)
     invocation = out.get("cloud", {}).get("claudeInvocation") or {}
     invocation["rawOutput"] = ""
     if invocation.get("error"):
@@ -1555,41 +1536,6 @@ def page_html():
       max-height: 440px;
       overflow: auto;
     }
-    .summaryPanel { display: grid; gap: 12px; }
-    .summaryGrid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .metric {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px;
-      background: #fff;
-      min-height: 70px;
-    }
-    .metric b { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-    .metric span { display: block; font-size: 20px; font-weight: 850; line-height: 1.15; overflow-wrap: anywhere; }
-    .noticeSafe {
-      border: 1px solid #abefc6;
-      background: var(--green-bg);
-      border-radius: 8px;
-      padding: 12px;
-      color: #05603a;
-      font-size: 13px;
-      line-height: 1.55;
-    }
-    .noticeSafe strong { display: block; margin-bottom: 3px; }
-    .sourceList { display: flex; flex-wrap: wrap; gap: 8px; }
-    .sourceChip {
-      border: 1px solid var(--line);
-      background: var(--soft);
-      color: var(--muted);
-      border-radius: 999px;
-      padding: 5px 9px;
-      font-size: 12px;
-      font-weight: 700;
-    }
     .finding {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -1664,7 +1610,7 @@ def page_html():
     .bad { color: var(--red); }
     @media (max-width: 960px) {
       main { grid-template-columns: 1fr; }
-      .actions, .grid, .roles, .summaryGrid { grid-template-columns: 1fr; }
+      .actions, .grid, .roles { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1739,10 +1685,6 @@ OpenClaw 工具调用审计日志</div>
       <section>
         <h2>Security Guardian 建议治理动作</h2>
         <div class="timeline" id="reportTimeline">Loading...</div>
-      </section>
-      <section>
-        <h2>日志采集安全摘要</h2>
-        <div class="summaryPanel" id="cloudLogSummary">Loading...</div>
       </section>
       <section>
         <h2>告警规则</h2>
@@ -1894,27 +1836,6 @@ OpenClaw 工具调用审计日志</div>
         </div>
       `).join('');
     }
-    function renderCloudLogs(s) {
-      const summary = s.cloud.logSummary || {};
-      const total = summary.total || 0;
-      const risky = (summary.critical || 0) + (summary.high || 0) + (summary.warn || 0) + (summary.medium || 0);
-      const sources = Array.isArray(summary.sources) ? summary.sources : [];
-      document.getElementById('cloudLogSummary').innerHTML = `
-        <div class="noticeSafe">
-          <strong>原始日志正文不在网页展示</strong>
-          <span>页面只显示采集统计和来源摘要，避免日志中夹带的 token、密钥或会话内容被浏览器暴露。规则命中指本地预检规则匹配到的可疑日志条目数，不等同于最终风险发现数。</span>
-        </div>
-        <div class="summaryGrid">
-          <div class="metric"><b>采集条目</b><span>${escapeHtml(total)}</span></div>
-          <div class="metric"><b>规则命中</b><span class="${risky ? 'high' : 'controlled'}">${escapeHtml(risky)}</span></div>
-          <div class="metric"><b>严重命中</b><span class="${summary.critical ? 'critical' : 'controlled'}">${escapeHtml(summary.critical || 0)}</span></div>
-          <div class="metric"><b>最近时间</b><span>${escapeHtml(summary.latestTime || '待检测')}</span></div>
-        </div>
-        <div class="sourceList">
-          ${sources.length ? sources.map(x => `<span class="sourceChip">${escapeHtml(x)}</span>`).join('') : '<span class="sourceChip">尚未采集</span>'}
-        </div>
-      `;
-    }
     function renderMonitorAlerts(s) {
       if (!s.cloud.monitorAlerts.length) {
         document.getElementById('monitorAlerts').innerHTML = '<div class="row">尚未启用监控告警。请执行“启用监控告警”。</div>';
@@ -1980,7 +1901,6 @@ OpenClaw 工具调用审计日志</div>
 
       renderFindings(s);
       renderReportTimeline(s);
-      renderCloudLogs(s);
       renderMonitorAlerts(s);
 
       document.getElementById('finalAudit').textContent = s.finalAudit
