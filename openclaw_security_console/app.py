@@ -1902,12 +1902,12 @@ OpenClaw 工具调用审计日志</div>
       document.getElementById('cloudLogSummary').innerHTML = `
         <div class="noticeSafe">
           <strong>原始日志正文不在网页展示</strong>
-          <span>页面只显示采集统计和来源摘要，避免日志中夹带的 token、密钥或会话内容被浏览器暴露。</span>
+          <span>页面只显示采集统计和来源摘要，避免日志中夹带的 token、密钥或会话内容被浏览器暴露。规则命中指本地预检规则匹配到的可疑日志条目数，不等同于最终风险发现数。</span>
         </div>
         <div class="summaryGrid">
           <div class="metric"><b>采集条目</b><span>${escapeHtml(total)}</span></div>
-          <div class="metric"><b>高风险命中</b><span class="${risky ? 'high' : 'controlled'}">${escapeHtml(risky)}</span></div>
-          <div class="metric"><b>严重</b><span class="${summary.critical ? 'critical' : 'controlled'}">${escapeHtml(summary.critical || 0)}</span></div>
+          <div class="metric"><b>规则命中</b><span class="${risky ? 'high' : 'controlled'}">${escapeHtml(risky)}</span></div>
+          <div class="metric"><b>严重命中</b><span class="${summary.critical ? 'critical' : 'controlled'}">${escapeHtml(summary.critical || 0)}</span></div>
           <div class="metric"><b>最近时间</b><span>${escapeHtml(summary.latestTime || '待检测')}</span></div>
         </div>
         <div class="sourceList">
